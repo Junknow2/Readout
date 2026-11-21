@@ -15,9 +15,17 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - 音声ストリーミング: `GET /audio/{filename}`（HTTP Range 206 Partial Content に対応し、シーク再生も滑らか）。
    - プライベート Podcast RSS: `GET /feed.xml`（Pocket Casts や Apple Podcasts で直接購読可能）。
 
-2. **ランナー特化・完全オフライン対応 PWA (`templates/index.html`, `static/`)**:
+2. **内蔵 RSS リーダー ＆ 1タップ音声キュー追加 (`feed_manager.py`)**:
+   - 購読フィード管理（`data/feeds.json`）による RSS/Atom フィードの永続化。
+   - デフォルトで「The GitHub Blog」「Zennのトレンド」等の良質テックフィードをプリセット。
+   - 並行フェッチ（ThreadPoolExecutor）による高速新着記事アグリゲーション。
+   - タイムラインから**「🎧 走るリストに追加」を1タップ**するだけで、自動で本文抽出・AIリライト・TTS音声化キューへ投入（「⏳ 生成中」➜「✓ キュー追加済」へ状態遷移）。
+
+3. **ランナー特化・完全オフライン対応 PWA (`templates/index.html`, `static/`)**:
+   - **タブ切り替えバー**: `[ 🏃 再生キュー ]` と `[ 📰 RSSリーダー ]` をシームレスに行き来可能。
    - **高コントラスト・ダークテーマ**: 屋外直射日光下やOLED画面でも見やすい漆黒（`#0A0A0E`）× ネオンイエロー（`#CCFF00`）。
    - **大型タッチUI**: 揺れや手袋着用時でも誤タップしない特大再生ボタン、10秒戻し（-10s）/ 30秒送り（+30s）ボタン。
+
    - **再生速度変更**: 1.0x / 1.25x / 1.5x / 2.0x をワンタップ切り替え。
    - **Service Worker (`sw.js`) による完全オフライン再生**:
      - 静的アセットキャッシュに加え、生成済み MP3 音声を CacheStorage に自動事前キャッシュ。
@@ -33,13 +41,14 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
 ```text
 Readout/
 ├── data/
-│   └── queue.json         # 再生キュー永続化ストア
+│   ├── queue.json         # 再生キュー永続化ストア
+│   └── feeds.json         # 購読RSSフィード設定
 ├── output/                # 生成された MP3 および テキスト原稿
 ├── static/
 │   ├── css/
-│   │   └── style.css      # ランナー特化ハイコントラスト CSS
+│   │   └── style.css      # ランナー特化ハイコントラスト CSS (タブ・RSSリーダー含む)
 │   ├── js/
-│   │   └── app.js         # PWA クライアントロジック (MediaSession/キャッシュ)
+│   │   └── app.js         # PWA クライアントロジック (MediaSession/キャッシュ/RSS)
 │   ├── icons/             # 192x192, 512x512 PWA アプリアイコン
 │   ├── manifest.json      # PWA Web App Manifest
 │   └── sw.js              # オフライン & Rangeリクエスト対応 Service Worker
@@ -47,12 +56,14 @@ Readout/
 │   └── index.html         # PWA UI テンプレート
 ├── main.py                # FastAPI メインアプリケーション
 ├── queue_manager.py       # キュー永続化マネージャー
+├── feed_manager.py        # RSSフィード購読・タイムライン管理
 ├── poc_pipeline.py        # 抽出・Geminiリライト・Edge-TTS パイプライン
 ├── test_verification.py   # 自動結合テストスクリプト
 ├── run_server.bat         # サーバー起動バッチ
 ├── run_server.ps1         # サーバー起動 PowerShell
 ├── requirements.txt       # 依存ライブラリ
 └── venv/                  # 専用仮想環境 (Python 3.12)
+
 ```
 
 ---
@@ -92,5 +103,10 @@ cd C:\Users\Jun\Documents\Dev\Readout
 | `POST` | `/api/queue` | 新規URL追加（バックグラウンド生成開始） |
 | `POST` | `/api/queue/{id}/listened` | 既読フラグ更新（キューから除外） |
 | `DELETE` | `/api/queue/{id}` | キュー削除およびMP3ファイル削除 |
+| `GET` | `/api/feeds` | 購読中RSSフィード一覧取得 |
+| `POST` | `/api/feeds` | 新規RSSフィード購読登録 |
+| `DELETE` | `/api/feeds/{id}` | RSSフィード購読解除 |
+| `GET` | `/api/articles` | 購読フィード新着記事タイムライン一覧（最新順） |
 | `GET` | `/audio/{filename}` | MP3 音声ストリーミング（HTTP Range 206 対応） |
 | `GET` | `/feed.xml` | Pocket Casts 購読用 Podcast RSS 2.0 フィード |
+
