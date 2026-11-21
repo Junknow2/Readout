@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Readout - ランナー専用音声キュレーター</title>
+  
+  <!-- PWA & Mobile Meta Tags -->
+  <meta name="theme-color" content="#0A0A0E">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Readout">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <img src="/static/icons/icon-192.png" alt="Logo" class="brand-icon">
+        <span class="brand-title">Readout</span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-rss" class="btn-icon-small" title="Pocket Casts 用 RSS フィード URL をコピー">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+          RSS
+        </button>
+        <span id="network-badge" class="status-badge online">ONLINE</span>
+      </div>
+    </header>
+
+    <!-- URL Input Quick Card -->
+    <section class="url-form-card">
+      <input type="url" id="url-input" class="url-input" placeholder="記事のURLをペーストして追加..." autocomplete="off">
+      <button id="btn-add-url" class="btn-add">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        追加
+      </button>
+    </section>
+
+    <!-- Main High-Contrast Player -->
+    <section class="player-card">
+      <div class="player-header">
+        <div class="track-info">
+          <span class="track-tag" id="track-status-tag">NOW PLAYING</span>
+          <h1 class="track-title" id="player-title">再生待ちのアイテムがありません</h1>
+          <p class="track-summary" id="player-summary">URLを追加すると、Geminiがポッドキャスト風にリライトして高音質音声化します。</p>
+        </div>
+        <button id="btn-speed" class="btn-speed">1.0x</button>
+      </div>
+
+      <!-- Seek & Progress Bar -->
+      <div class="progress-container">
+        <div class="progress-bar-wrap" id="progress-wrap">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="time-row">
+          <span id="time-current">0:00</span>
+          <span id="time-duration">0:00</span>
+        </div>
+      </div>
+
+      <!-- Giant Touch Controls for Running Gestures -->
+      <div class="player-controls">
+        <!-- 10s Backward -->
+        <button id="btn-seek-back" class="ctrl-btn ctrl-btn-seek" title="10秒戻る">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          <span>-10s</span>
+        </button>
+
+        <!-- Previous Track -->
+        <button id="btn-prev" class="ctrl-btn ctrl-btn-step" title="前のトラック">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+
+        <!-- Giant Play/Pause -->
+        <button id="btn-play-pause" class="ctrl-btn ctrl-btn-play" title="再生 / 一時停止">
+          <svg id="icon-play" width="38" height="38" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg id="icon-pause" width="38" height="38" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+        </button>
+
+        <!-- Next Track -->
+        <button id="btn-next" class="ctrl-btn ctrl-btn-step" title="次のトラック">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+
+        <!-- 30s Forward -->
+        <button id="btn-seek-forward" class="ctrl-btn ctrl-btn-seek" title="30秒進む">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <span>+30s</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Running Queue Stack -->
+    <section class="queue-section">
+      <div class="section-header">
+        <h2 class="section-title">再生キュー</h2>
+        <span id="queue-counter" class="queue-count">0 件</span>
+      </div>
+
+      <div id="queue-list" class="queue-list">
+        <!-- Rendered by app.js -->
+        <div class="queue-empty">
+          <p class="queue-empty-title">キューは空です</p>
+          <p>上の入力欄に読みたい記事のURLを入れてください。</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Audio Element -->
+  <audio id="audio-player" preload="metadata"></audio>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">メッセージ</div>
+
+  <!-- Scripts -->
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
