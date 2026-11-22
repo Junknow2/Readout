@@ -1,6 +1,9 @@
 import asyncio
+import base64
+import hashlib
 import html
 import os
+import secrets
 import time
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -26,6 +29,10 @@ OUTPUT_DIR = BASE_DIR / "output"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
+# Auth configuration (mirrors Matrix / LifeLog)
+READOUT_USERNAME = os.getenv("READOUT_USERNAME") or os.getenv("DASHBOARD_USERNAME")
+READOUT_PASSWORD = os.getenv("READOUT_PASSWORD") or os.getenv("DASHBOARD_PASSWORD")
+
 app = FastAPI(title="Readout", description="Marathon / Running Audio Queue & PWA")
 
 # CORS for local dev / PWA
@@ -36,6 +43,75 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Authentication & Security Middleware
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    path = request.scope.get("path", "")
+    set_cookie_needed = False
+    expected_token = None
+
+    if READOUT_USERNAME and READOUT_PASSWORD:
+        exempt_paths = [
+            "/manifest.json",
+            "/apple-touch-icon.png",
+            "/apple-touch-icon-precomposed.png",
+            "/favicon.ico",
+            "/favicon.png",
+            "/sw.js",
+        ]
+        if path not in exempt_paths and not path.startswith("/static"):
+            authenticated = False
+            expected_token = hashlib.sha256(
+                f"{READOUT_USERNAME}:{READOUT_PASSWORD}:readout_cookie_salt_2026".encode("utf-8")
+            ).hexdigest()
+
+            # A. Check cookie (1-year persistent session)
+            cookie_val = request.cookies.get("readout_auth")
+            if cookie_val and secrets.compare_digest(cookie_val, expected_token):
+                authenticated = True
+
+            # B. Check HTTP Basic Auth header
+            if not authenticated:
+                auth_header = request.headers.get("authorization", "")
+                if auth_header.startswith("Basic "):
+                    try:
+                        encoded_creds = auth_header[6:].strip()
+                        decoded_creds = base64.b64decode(encoded_creds).decode("utf-8")
+                        if ":" in decoded_creds:
+                            u, p = decoded_creds.split(":", 1)
+                            user_ok = secrets.compare_digest(u, READOUT_USERNAME)
+                            pass_ok = secrets.compare_digest(p, READOUT_PASSWORD)
+                            if user_ok and pass_ok:
+                                authenticated = True
+                                set_cookie_needed = True
+                    except Exception:
+                        pass
+
+            if not authenticated:
+                return Response(
+                    content="Unauthorized: Access to Readout requires authentication.\n",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Readout", charset="UTF-8"'},
+                    media_type="text/plain"
+                )
+
+    response = await call_next(request)
+
+    # Issue 1-year persistent session cookie on successful Basic Auth
+    if set_cookie_needed and expected_token:
+        response.set_cookie(
+            key="readout_auth",
+            value=expected_token,
+            max_age=31536000,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -76,7 +152,12 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
         queue_manager.update_item(item_id, title=title, page_count=page_count)
 
         # Step B: Rewrite
-        script_text = poc_pipeline.rewrite_for_audio(title, extracted["content"], model_name=chosen_model)
+        script_text = poc_pipeline.rewrite_for_audio(
+            title,
+            extracted["content"],
+            site_name=extracted.get("site_name", ""),
+            model_name=chosen_model
+        )
 
         # Save script text
         audio_filename = item["audio_filename"] or f"{item_id}.mp3"

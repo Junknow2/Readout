@@ -45,26 +45,33 @@ DEFAULT_VOICE = "ja-JP-NanamiNeural"  # or ja-JP-KeitaNeural
 DEFAULT_TEST_URL = "https://github.blog/news-insights/product-news/github-copilot-enterprise-is-now-generally-available/"
 
 PODCAST_REWRITE_PROMPT = """\
-あなたはマラソンやランニングをしながら聴くための「音声ニュース・ポッドキャスト」の専属プロライター兼ナレーター原稿作成者です。
+あなたは歩行中や移動中に耳で聴いてインプットするための「音声ナレーション原稿」の専属プロライターです。
 
-以下の記事コンテンツを、耳で聴くだけでスッと情景やロジックが頭に入ってくる「ラジオニュース・ポッドキャスト原稿風の自然な日本語」にリライトしてください。
+以下の記事コンテンツを、耳で聴くだけでスッと情景やロジックが頭に入ってくる「自然で無駄のない日本語ナレーション」にリライトしてください。
 
 【重要なリライト要件】
-1. **耳心地の良さとリズム感**:
+1. **冒頭・結びの無駄な挨拶の完全排除**:
+   - 「こんにちは」「〇〇の時間です」「今日も良い一日を」「良いランを」といったラジオ風・ポッドキャスト風の前置き挨拶や結びの掛け声は【一切出力しないでください】。
+   - 冒頭は必ず「{site_name}、『{title}』。」というシンプルな宣言から始めて、即座に本文の解説へ入ってください。
+   - 結びも応援や挨拶は入れず、記事のまとめ・結論で潔く終了してください。
+2. **耳心地の良さとリズム感**:
    - 1文を短くし、テンポよく心地よい話し言葉（「です・ます」調）で執筆してください。
-   - 走っている人が息切れや足音の中でも理解できるよう、複雑な複文や難解な漢語は避け、平易な表現に言い換えてください。
-2. **翻訳と口語化**:
+   - 移動中や環境音の中でも理解できるよう、複雑な複文や難解な漢語は避け、平易な表現に言い換えてください。
+3. **翻訳と口語化**:
    - 英語記事の場合は直訳を排し、自然な日本語のナレーションとして表現してください。
    - 専門用語が出るときは、簡単な補足や例えを交えて耳で理解できるようにしてください。
-3. **ノイズの完全除去**:
+4. **ノイズの完全除去**:
    - URL、目次、参考文献、コードブロック、複雑な表、注釈番号などは完全に除外してください。
    - Markdownの見出し記号（# や ##）、箇条書き記号（* や - や ・）、アスタリスク、波線、絵文字は一切出力しないでください。音声合成エンジンが記号をそのまま読んでしまうのを防ぐため、句読点（「、」「。」）や疑問符・感嘆符のみを用いたプレーンテキストにしてください。
-4. **複数ページ・連載記事の自然な統合**:
+5. **複数ページ・連載記事の自然な統合**:
    - 元記事が「ページ2」「続き」や複数回に分割されている場合でも、1本の一貫したストーリー・解説としてスムーズに繋げてください。「次のページに移ります」「ページ2では」といった不自然なメタ言及は避け、「続いて、後半では」「さらに別の側面として」のように自然なナレーションの展開としてまとめてください。
-5. **構成**:
-   - 冒頭: 「こんにちは。ランナーズ・ボイスの時間です。今日は、『{title}』についてのトピックをお届けします。」のような、リスナーを引き込む親しみやすい導入。
-   - 本文: 核心となるポイントを分かりやすく段階的に解説。
-   - 結び: 「ランニングの合間のインプットに、ぜひ役立ててみてくださいね。それでは、今日も良いランを！」といった爽やかな締めくくり。
+6. **構成**:
+   - 冒頭: 「{site_name}、『{title}』。」から即座に本文の核心・背景へ導入。
+   - 本文: 核心となるポイントを分かりやすくロジカルに解説。
+   - 結び: 記事の要点・結論の要約でシンプルに終了。
+
+【媒体名】
+{site_name}
 
 【元記事タイトル】
 {title}
@@ -211,6 +218,21 @@ def extract_single_page(html_content: str, url: str) -> dict:
     """Extract metadata and clean main body text from raw HTML using trafilatura."""
     metadata = trafilatura.extract_metadata(html_content)
     title = metadata.title if metadata and metadata.title else ""
+    site_name = ""
+    if metadata and getattr(metadata, "sitename", None):
+        site_name = metadata.sitename
+    if not site_name:
+        try:
+            doc = lxml.html.fromstring(html_content)
+            og_sites = doc.xpath('//meta[@property="og:site_name"]/@content')
+            if og_sites and og_sites[0].strip():
+                site_name = og_sites[0].strip()
+        except Exception:
+            pass
+    if not site_name:
+        parsed_netloc = urlparse(url).netloc
+        site_name = parsed_netloc.replace("www.", "")
+
     config = use_config()
     config.set("DEFAULT", "EXTRACTION_COVERAGE", "medium")
     text = trafilatura.extract(
@@ -222,7 +244,7 @@ def extract_single_page(html_content: str, url: str) -> dict:
         include_links=False,
         favor_recall=True
     )
-    return {"title": title, "content": text or "", "url": url}
+    return {"title": title, "content": text or "", "site_name": site_name, "url": url}
 
 
 def extract_multipage_content(start_url: str, max_pages: int = 10) -> dict:
@@ -297,10 +319,12 @@ def extract_multipage_content(start_url: str, max_pages: int = 10) -> dict:
 
         merged_text = "".join(parts)
 
+    main_site_name = pages[0].get("site_name") or ""
     elapsed = time.time() - t0
-    print(f"  [+] Extracted {len(pages)} pages ({len(merged_text)} total chars) in {elapsed:.2f}s")
+    print(f"  [+] Extracted {len(pages)} pages ({len(merged_text)} total chars) from {main_site_name} in {elapsed:.2f}s")
     return {
         "title": main_title,
+        "site_name": main_site_name,
         "content": merged_text,
         "url": start_url,
         "pages": [p["url"] for p in pages],
@@ -314,7 +338,7 @@ def extract_content_from_url(url: str, max_pages: int = 10) -> dict:
     return extract_multipage_content(url, max_pages=max_pages)
 
 
-def rewrite_for_audio(title: str, content: str, model_name: str = DEFAULT_MODEL) -> str:
+def rewrite_for_audio(title: str, content: str, site_name: str = "", model_name: str = DEFAULT_MODEL) -> str:
     """Rewrite extracted text into natural audio podcast script using Gemini."""
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not set. Check .env file.")
@@ -324,7 +348,8 @@ def rewrite_for_audio(title: str, content: str, model_name: str = DEFAULT_MODEL)
     # Truncate content if excessively long (over 25000 chars)
     clipped_content = content[:25000] if len(content) > 25000 else content
 
-    prompt = PODCAST_REWRITE_PROMPT.format(title=title, content=clipped_content)
+    clean_site_name = site_name.strip() if site_name else "Web記事"
+    prompt = PODCAST_REWRITE_PROMPT.format(site_name=clean_site_name, title=title, content=clipped_content)
     
     models_to_try = [model_name] + [m for m in FALLBACK_MODELS if m != model_name]
     
@@ -380,7 +405,12 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
     extracted = extract_content_from_url(url, max_pages=max_pages)
 
     # Step B: Rewrite
-    script_text = rewrite_for_audio(extracted["title"], extracted["content"], model_name=model)
+    script_text = rewrite_for_audio(
+        extracted["title"],
+        extracted["content"],
+        site_name=extracted.get("site_name", ""),
+        model_name=model
+    )
 
     # Save script text for inspection alongside MP3
     txt_path = output_mp3_path.with_suffix(".txt")

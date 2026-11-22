@@ -203,7 +203,7 @@
           <div class="bookmarklet-step-title">使い方 1: ドラッグ＆ドロップ（推奨）</div>
           <p class="bookmarklet-instruction">下のボタンをブラウザの「ブックマークバー」にドラッグ＆ドロップしてください：</p>
           <div class="bookmarklet-drag-wrap">
-            <a id="bookmarklet-link" href="javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('http://127.0.0.1:8002/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();" class="bookmarklet-badge" title="ブックマークバーへドラッグ＆ドロップ">
+            <a id="bookmarklet-link" href="javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('https://readout.nocial.jp/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();" class="bookmarklet-badge" title="ブックマークバーへドラッグ＆ドロップ">
               🎧 Readout に追加
             </a>
           </div>
@@ -213,7 +213,7 @@
           <div class="bookmarklet-step-title">使い方 2: コードを手動コピー</div>
           <p class="bookmarklet-instruction">手動でブックマークの URL 欄に登録する場合：</p>
           <div class="code-copy-row">
-            <input type="text" id="bookmarklet-code-input" class="bookmarklet-input" readonly value="javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('http://127.0.0.1:8002/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();">
+            <input type="text" id="bookmarklet-code-input" class="bookmarklet-input" readonly value="javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('https://readout.nocial.jp/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();">
             <button id="btn-copy-bookmarklet" class="btn-copy">コピー</button>
           </div>
         </div>

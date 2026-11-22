@@ -875,9 +875,9 @@
   // Bookmarklet Modal & Code Generator
   // -------------------------------------------------------------
   function getBookmarkletCode() {
-    const origin = (window.location.origin && window.location.origin !== 'null') 
+    const origin = (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('file:')) 
       ? window.location.origin 
-      : 'http://127.0.0.1:8002';
+      : 'https://readout.nocial.jp';
     return `javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('${origin}/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();`;
   }
 
