@@ -1,4 +1,4 @@
-const CACHE_NAME = 'readout-v1';
+const CACHE_NAME = 'readout-v2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
