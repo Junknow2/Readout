@@ -1,4 +1,5 @@
 import asyncio
+import html
 import os
 import time
 from datetime import datetime, timezone
@@ -69,6 +70,8 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
         # Step A: Extract
         extracted = poc_pipeline.extract_content_from_url(url)
         title = extracted["title"]
+        if (not title or title == "無題の記事") and item.get("title") and item.get("title") != "URLを解析中...":
+            title = item["title"]
         queue_manager.update_item(item_id, title=title)
 
         # Step B: Rewrite
@@ -173,6 +176,268 @@ async def add_to_queue(payload: AddQueueRequest, background_tasks: BackgroundTas
         model=payload.model,
     )
     return item
+
+
+HTML_POPUP_SUCCESS = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Readout - 登録完了</title>
+  <style>
+    :root {
+      --bg: #0A0A0E;
+      --surface: #14141B;
+      --border: #2A2A38;
+      --neon-yellow: #CCFF00;
+      --text: #FFFFFF;
+      --text-muted: #9E9EB2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+      overflow: hidden;
+      user-select: none;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px 20px;
+      width: 100%;
+      max-width: 360px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 15px rgba(204, 255, 0, 0.12);
+    }
+    .icon-badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(204, 255, 0, 0.12);
+      border: 2px solid var(--neon-yellow);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: var(--neon-yellow);
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    @keyframes popIn {
+      0% { transform: scale(0.5); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .title {
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: var(--neon-yellow);
+      letter-spacing: -0.3px;
+    }
+    .article-title {
+      font-size: 0.82rem;
+      color: var(--text);
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.9;
+    }
+    .subtext {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .progress-bar-wrap {
+      width: 100%;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 2px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--neon-yellow);
+      width: 100%;
+      animation: countdown 1.5s linear forwards;
+    }
+    @keyframes countdown {
+      from { width: 100%; }
+      to { width: 0%; }
+    }
+    .close-btn {
+      margin-top: 2px;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .close-btn:hover {
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-badge">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+      </svg>
+    </div>
+    <div class="title">🎧 Readout に追加しました！</div>
+    <div class="article-title">{display_title}</div>
+    <div class="subtext">(1.5秒後に自動で閉じます)</div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill"></div>
+    </div>
+    <button class="close-btn" onclick="window.close()">今すぐ閉じる</button>
+  </div>
+  <script>
+    setTimeout(function() {
+      window.close();
+    }, 1500);
+  </script>
+</body>
+</html>
+"""
+
+HTML_POPUP_ERROR = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Readout - エラー</title>
+  <style>
+    :root {
+      --bg: #0A0A0E;
+      --surface: #14141B;
+      --border: #2A2A38;
+      --danger: #FF3366;
+      --text: #FFFFFF;
+      --text-muted: #9E9EB2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+      overflow: hidden;
+      user-select: none;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px 20px;
+      width: 100%;
+      max-width: 360px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+    .icon-badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(255, 51, 102, 0.15);
+      border: 2px solid var(--danger);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: var(--danger);
+    }
+    .title {
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: var(--danger);
+    }
+    .message {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .btn {
+      margin-top: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.8rem;
+      padding: 6px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-badge">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+    </div>
+    <div class="title">追加できませんでした</div>
+    <div class="message">{error_message}</div>
+    <button class="btn" onclick="window.close()">閉じる</button>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.get("/api/bookmarklet", response_class=HTMLResponse)
+async def add_via_bookmarklet(
+    url: str,
+    background_tasks: BackgroundTasks,
+    title: Optional[str] = None,
+    voice: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    """Add a new URL via 1-click bookmarklet popup and return auto-closing confirmation page."""
+    clean_url = str(url).strip()
+    if not clean_url.startswith("http://") and not clean_url.startswith("https://"):
+        safe_msg = html.escape("無効なURL形式です。http:// または https:// で始まるURLを指定してください。")
+        return HTMLResponse(
+            status_code=400,
+            content=HTML_POPUP_ERROR.replace("{error_message}", safe_msg),
+        )
+
+    clean_title = title.strip() if title else ""
+    item = queue_manager.add_item(url=clean_url, title=clean_title or None)
+    background_tasks.add_task(
+        process_item_task,
+        item_id=item["id"],
+        voice=voice,
+        model=model,
+    )
+
+    display_title = html.escape(clean_title or clean_url)
+    html_content = HTML_POPUP_SUCCESS.replace("{display_title}", display_title)
+    return HTMLResponse(content=html_content)
 
 
 @app.post("/api/queue/{item_id}/listened")

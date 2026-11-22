@@ -26,6 +26,13 @@
   const networkBadge = document.getElementById('network-badge');
   const toast = document.getElementById('toast');
   const btnRss = document.getElementById('btn-rss');
+  const btnBookmarklet = document.getElementById('btn-bookmarklet');
+  const btnBookmarkletTip = document.getElementById('btn-bookmarklet-tip');
+  const modalBookmarklet = document.getElementById('modal-bookmarklet');
+  const modalClose = document.getElementById('modal-close');
+  const bookmarkletLink = document.getElementById('bookmarklet-link');
+  const bookmarkletCodeInput = document.getElementById('bookmarklet-code-input');
+  const btnCopyBookmarklet = document.getElementById('btn-copy-bookmarklet');
 
   // Tabs DOM
   const tabBtnQueue = document.getElementById('tab-btn-queue');
@@ -858,8 +865,90 @@
   });
 
   // -------------------------------------------------------------
+  // Bookmarklet Modal & Code Generator
+  // -------------------------------------------------------------
+  function getBookmarkletCode() {
+    const origin = (window.location.origin && window.location.origin !== 'null') 
+      ? window.location.origin 
+      : 'http://127.0.0.1:8002';
+    return `javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('${origin}/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();`;
+  }
+
+  function setupBookmarklet() {
+    const code = getBookmarkletCode();
+    if (bookmarkletLink) {
+      bookmarkletLink.setAttribute('href', code);
+    }
+    if (bookmarkletCodeInput) {
+      bookmarkletCodeInput.value = code;
+    }
+  }
+
+  function openBookmarkletModal() {
+    setupBookmarklet();
+    if (modalBookmarklet) {
+      modalBookmarklet.style.display = 'flex';
+    }
+  }
+
+  function closeBookmarkletModal() {
+    if (modalBookmarklet) {
+      modalBookmarklet.style.display = 'none';
+    }
+  }
+
+  if (btnBookmarklet) {
+    btnBookmarklet.addEventListener('click', openBookmarkletModal);
+  }
+  if (btnBookmarkletTip) {
+    btnBookmarkletTip.addEventListener('click', openBookmarkletModal);
+  }
+  if (modalClose) {
+    modalClose.addEventListener('click', closeBookmarkletModal);
+  }
+  if (modalBookmarklet) {
+    modalBookmarklet.addEventListener('click', (e) => {
+      if (e.target === modalBookmarklet) {
+        closeBookmarkletModal();
+      }
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalBookmarklet && modalBookmarklet.style.display !== 'none') {
+      closeBookmarkletModal();
+    }
+  });
+
+  if (bookmarkletLink) {
+    bookmarkletLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      showToast('このボタンをブラウザのブックマークバーにドラッグ＆ドロップしてください！');
+    });
+  }
+
+  if (btnCopyBookmarklet && bookmarkletCodeInput) {
+    btnCopyBookmarklet.addEventListener('click', () => {
+      const code = bookmarkletCodeInput.value || getBookmarkletCode();
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(code).then(() => {
+          showToast('ブックマークレットコードをコピーしました！');
+        }).catch(() => {
+          bookmarkletCodeInput.select();
+          document.execCommand('copy');
+          showToast('コードをコピーしました');
+        });
+      } else {
+        bookmarkletCodeInput.select();
+        document.execCommand('copy');
+        showToast('コードをコピーしました');
+      }
+    });
+  }
+
+  // -------------------------------------------------------------
   // Initialization & Polling loop for background queue processing
   // -------------------------------------------------------------
+  setupBookmarklet();
   fetchQueue();
   setInterval(() => {
     const hasActiveTask = queue.some(it => it.status === 'pending' || it.status === 'processing');

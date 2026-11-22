@@ -26,6 +26,10 @@
         <span class="brand-title">Readout</span>
       </div>
       <div class="header-actions">
+        <button id="btn-bookmarklet" class="btn-icon-small" title="ワンクリック登録ブックマークレット">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          ブックマークレット
+        </button>
         <button id="btn-rss" class="btn-icon-small" title="Pocket Casts 用 RSS フィード URL をコピー">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
           Podcast RSS
@@ -56,6 +60,10 @@
           追加
         </button>
       </section>
+      <div class="quick-tip-row">
+        <span>🔖 ブラウザ閲覧中の記事を1クリック登録:</span>
+        <button id="btn-bookmarklet-tip" class="link-btn-text">ブックマークレットを使う</button>
+      </div>
 
       <!-- Main High-Contrast Player -->
       <section class="player-card">
@@ -173,6 +181,47 @@
           </div>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- Bookmarklet Modal -->
+  <div id="modal-bookmarklet" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-icon">🔖</span>
+          <h3 class="modal-title">ワンクリック登録ブックマークレット</h3>
+        </div>
+        <button id="modal-close" class="modal-close-btn" aria-label="閉じる">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          PCのブラウザ（Chrome, Edge, Safari等）で閲覧中のWeb記事を、ワンクリックで直接 Readout の音声化キューに登録できます。
+        </p>
+
+        <div class="bookmarklet-box">
+          <div class="bookmarklet-step-title">使い方 1: ドラッグ＆ドロップ（推奨）</div>
+          <p class="bookmarklet-instruction">下のボタンをブラウザの「ブックマークバー」にドラッグ＆ドロップしてください：</p>
+          <div class="bookmarklet-drag-wrap">
+            <a id="bookmarklet-link" href="javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('http://127.0.0.1:8002/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();" class="bookmarklet-badge" title="ブックマークバーへドラッグ＆ドロップ">
+              🎧 Readout に追加
+            </a>
+          </div>
+        </div>
+
+        <div class="bookmarklet-box">
+          <div class="bookmarklet-step-title">使い方 2: コードを手動コピー</div>
+          <p class="bookmarklet-instruction">手動でブックマークの URL 欄に登録する場合：</p>
+          <div class="code-copy-row">
+            <input type="text" id="bookmarklet-code-input" class="bookmarklet-input" readonly value="javascript:(function(){const u=encodeURIComponent(location.href);const t=encodeURIComponent(document.title);const w=window.open('http://127.0.0.1:8002/api/bookmarklet?url='+u+'&title='+t,'readout_popup','width=400,height=260,menubar=no,toolbar=no,location=no,status=no');if(w){w.focus();}})();">
+            <button id="btn-copy-bookmarklet" class="btn-copy">コピー</button>
+          </div>
+        </div>
+
+        <div class="modal-notes">
+          <p class="note-item">⚡ <strong>CSP完全対応:</strong> ポップアップウィンドウ方式を採用しているため、note や GitHub などセキュリティ制限の厳しいサイトでも通信エラーを起こさず確実に登録されます。</p>
+        </div>
+      </div>
     </div>
   </div>
 
