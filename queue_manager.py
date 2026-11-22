@@ -77,6 +77,7 @@ def add_item(url: str, title: Optional[str] = None) -> Dict[str, Any]:
         "audio_duration_sec": 0.0,
         "status": "pending",  # pending -> processing -> ready -> listened (or failed)
         "error_message": None,
+        "page_count": 1,
         "created_at": now,
     }
     items.append(new_item)

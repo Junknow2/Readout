@@ -72,7 +72,8 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
         title = extracted["title"]
         if (not title or title == "無題の記事") and item.get("title") and item.get("title") != "URLを解析中...":
             title = item["title"]
-        queue_manager.update_item(item_id, title=title)
+        page_count = extracted.get("page_count", 1)
+        queue_manager.update_item(item_id, title=title, page_count=page_count)
 
         # Step B: Rewrite
         script_text = poc_pipeline.rewrite_for_audio(title, extracted["content"], model_name=chosen_model)
@@ -108,8 +109,9 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
             audio_duration_sec=duration_sec,
             status="ready",
             error_message=None,
+            page_count=page_count,
         )
-        print(f"[+] Task completed for {item_id}: {title} ({duration_sec}s)")
+        print(f"[+] Task completed for {item_id}: {title} ({duration_sec}s, {page_count} pages)")
 
     except Exception as e:
         print(f"[-] Processing failed for item {item_id}: {e}")

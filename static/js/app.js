@@ -512,6 +512,12 @@
         statusBadgeHtml = `<span class="badge-status failed">生成失敗</span>`;
       }
 
+      // Multi-page Badge
+      let pageBadgeHtml = '';
+      if (item.page_count && item.page_count > 1) {
+        pageBadgeHtml = `<span class="badge-status" style="background:rgba(59,130,246,0.18);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);">全${item.page_count}ページ結合</span>`;
+      }
+
       // Offline Badge
       let offlineBadgeHtml = '';
       if (isCached) {
@@ -529,6 +535,7 @@
           <h3 class="card-title">${escapeHtml(item.title)}</h3>
           <div class="card-meta">
             ${statusBadgeHtml}
+            ${pageBadgeHtml}
             ${offlineBadgeHtml}
             ${durationHtml}
           </div>

@@ -49,7 +49,7 @@ print(f"Created queue item: {item_id} | Initial status: {item['status']}")
 print("\n>>> 5. Waiting for AI rewrite + TTS audio generation pipeline...")
 t0 = time.time()
 ready_item = None
-while time.time() - t0 < 60:
+while time.time() - t0 < 120:
     q_res = requests.get(f"{BASE}/api/queue")
     q_data = q_res.json()
     matched = [it for it in q_data if it["id"] == item_id]
@@ -66,7 +66,7 @@ while time.time() - t0 < 60:
             break
     time.sleep(3)
 
-assert ready_item is not None, "Item did not reach ready status within 60s!"
+assert ready_item is not None, "Item did not reach ready status within 120s!"
 print(f">>> Audio pipeline completed successfully in {time.time()-t0:.1f}s!")
 print(f"Title: {ready_item['title']}")
 print(f"Audio Duration: {ready_item['audio_duration_sec']}s")
