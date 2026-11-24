@@ -2,7 +2,7 @@
 
 マラソンや屋外ランニング中に「耳で聴いて知識をインプットする」ためのパーソナル音声ニュース・ポッドキャスト生成プラットフォーム。
 
-Web上の記事（技術ブログ、note、海外テックニュース等）のURLを入力すると、本文抽出 ➜ Gemini による耳用リライト・翻訳 ➜ Edge-TTS による高品質日本語ナレーション音声（MP3）を非同期自動生成。屋外や直射日光下でも操作しやすい**高視認性PWA（Progressive Web App）**および**Pocket Casts等で購読できるプライベートPodcast RSSフィード**を提供します。
+Web上の記事（技術ブログ、note、海外テックニュース等）のURLを入力すると、本文抽出 ➜ Gemini による耳用リライト・翻訳 ➜ **ローカル音声合成「VOICEPEAK」（ナレーター: 女性2 / Japanese Female 2）**による圧倒的に自然でクリアなナレーション音声（192kbps MP3）を非同期自動生成（Edge-TTS 自動フォールバック対応）。屋外や直射日光下でも操作しやすい**高視認性PWA（Progressive Web App）**および**Pocket Casts等で購読できるプライベートPodcast RSSフィード**を提供します。
 
 ---
 
@@ -39,6 +39,12 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - ページ間の重複タイトルやフッターノイズを自動除去し、Gemini 3.8 Flash で1本の自然なポッドキャスト原稿としてリライト ➜ 1つの高品質音声（MP3）に統合生成。
    - PWAのキュー画面にも「全Nページ結合」バッジを自動表示。
 
+5. **最高峰ローカル音声合成「VOICEPEAK」（女性2）＆ ffmpeg 結合パイプライン (`poc_pipeline.py`)**:
+   - 音声エンジンとしてローカルに導入された「VOICEPEAK」（ナレーター: `Japanese Female 2` / 女性2）を標準採用。クラウドTTSを凌駕する自然なアクセント・滑らかな抑揚を実現。
+   - **インテリジェント・センテンス分割**: VOICEPEAK CLI の文字数上限（140文字/回）を自動克服するため、文境界（`。` `！` `？` 改行）および句読点（`、`）で120文字前後のチャンクへ自然に自動分割して生成。
+   - **ffmpeg concat 192kbps エンコード**: 生成されたチャンク WAV 群を ffmpeg の concat demuxer で無劣化・シームレスに結合し、192kbps MP3 として高速エンコード。作業後の一時ファイルは自動安全消去。
+   - **自動フォールバック設計**: VOICEPEAK 未検出時やエラー発生時は、従来の `edge_tts`（`ja-JP-NanamiNeural`）へ自動フォールバックする安心の二重化設計。
+
 ---
 
 ## 📁 ディレクトリ構成
@@ -62,8 +68,9 @@ Readout/
 ├── main.py                # FastAPI メインアプリケーション
 ├── queue_manager.py       # キュー永続化マネージャー
 ├── feed_manager.py        # RSSフィード購読・タイムライン管理
-├── poc_pipeline.py        # 抽出・Geminiリライト・Edge-TTS パイプライン
+├── poc_pipeline.py        # 抽出・Geminiリライト・VOICEPEAK/Edge-TTS パイプライン
 ├── test_verification.py   # 自動結合テストスクリプト
+├── test_voicepeak_verification.py # VOICEPEAK 統合・音声検証テストスクリプト
 ├── run_server.bat         # サーバー起動バッチ
 ├── run_server.ps1         # サーバー起動 PowerShell
 ├── requirements.txt       # 依存ライブラリ
@@ -91,7 +98,7 @@ cd C:\Users\Jun\Documents\Dev\Readout
 1. スマホまたはPCのブラウザ（Chrome / Edge / Safari）で `http://127.0.0.1:8002`（または公開トンネルURL）を開きます。
 2. 「ホーム画面に追加」「アプリをインストール」でPWAとしてインストール可能。
 3. 上部の入力バーに聴きたい記事のURLをペーストして「追加」を押す。
-4. 約15〜20秒で Gemini 3.8 Flash によるリライトと Edge-TTS による音声化が完了し、キューに「READY」として追加されます。
+4. Gemini 3.8 Flash によるリライトと VOICEPEAK（女性2）による高品質音声化が完了し、キューに「READY」として追加されます（万一の障害時は Edge-TTS に自動フォールバック）。
 5. 「⚡ オフライン済」バッジが表示されたら、スマホを機内モード（オフライン）にしてもそのまま高音質再生が可能です。
 6. 右上の「RSS」ボタンを押すと、Pocket Casts 購読用のプライベート RSS フィード URL（`/feed.xml`）がコピーされます。
 

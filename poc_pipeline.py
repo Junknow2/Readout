@@ -3,7 +3,7 @@
 Readout - Minimal PoC Pipeline
 Step 1: URL Content Extraction (trafilatura + multipage crawler)
 Step 2: Ear-friendly Rewriting & Translation (Gemini 3.8 Flash)
-Step 3: High-Quality Audio Synthesis (Edge-TTS)
+Step 3: High-Quality Audio Synthesis (VOICEPEAK with Edge-TTS Fallback)
 """
 
 import os
@@ -12,6 +12,9 @@ import time
 import re
 import argparse
 import asyncio
+import shutil
+import subprocess
+import tempfile
 import warnings
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -41,7 +44,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-DEFAULT_VOICE = "ja-JP-NanamiNeural"  # or ja-JP-KeitaNeural
+VOICEPEAK_PATH = Path(os.getenv("VOICEPEAK_PATH", r"C:\Program Files\VOICEPEAK\voicepeak.exe"))
+DEFAULT_VOICE = "Japanese Female 2"  # VOICEPEAK narrator
+DEFAULT_TTS_ENGINE = "voicepeak"    # "voicepeak" or "edge_tts"
+FALLBACK_EDGE_VOICE = "ja-JP-NanamiNeural"  # Fallback voice when using Edge-TTS
 DEFAULT_TEST_URL = "https://github.blog/news-insights/product-news/github-copilot-enterprise-is-now-generally-available/"
 
 PODCAST_REWRITE_PROMPT = """\
@@ -376,28 +382,195 @@ def rewrite_for_audio(title: str, content: str, site_name: str = "", model_name:
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
 
-async def generate_speech_async(text: str, output_path: Path, voice: str = DEFAULT_VOICE):
+def split_text_for_voicepeak(text: str, max_chars: int = 120) -> list[str]:
+    """
+    Split text into chunks of <= max_chars (VOICEPEAK single-run limit is 140 chars).
+    Splits naturally on sentence boundaries (。, ！, ？, \n) and phrase boundaries (、).
+    """
+    lines = text.strip().splitlines()
+    sentences = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        parts = re.split(r'([。！？\?!])', line)
+        for i in range(0, len(parts), 2):
+            part = parts[i]
+            punct = parts[i+1] if i + 1 < len(parts) else ''
+            seg = (part + punct).strip()
+            if not seg:
+                continue
+            if len(seg) > max_chars:
+                sub_parts = re.split(r'([、,])', seg)
+                sub_cur = ''
+                for j in range(0, len(sub_parts), 2):
+                    sp = sub_parts[j]
+                    punc = sub_parts[j+1] if j + 1 < len(sub_parts) else ''
+                    sseg = sp + punc
+                    if not sseg:
+                        continue
+                    if len(sub_cur) + len(sseg) <= max_chars:
+                        sub_cur += sseg
+                    else:
+                        if sub_cur:
+                            sentences.append(sub_cur)
+                        while len(sseg) > max_chars:
+                            sentences.append(sseg[:max_chars])
+                            sseg = sseg[max_chars:]
+                        sub_cur = sseg
+                if sub_cur:
+                    sentences.append(sub_cur)
+            else:
+                sentences.append(seg)
+
+    chunks = []
+    cur = ''
+    for s in sentences:
+        if len(cur) + len(s) <= max_chars:
+            cur += s
+        else:
+            if cur:
+                chunks.append(cur)
+            cur = s
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _synthesize_voicepeak_sync(text: str, output_mp3_path: Path, narrator: str = DEFAULT_VOICE) -> None:
+    """Synchronous worker to run VOICEPEAK CLI in chunks and convert/concat WAV to MP3 via ffmpeg."""
+    if not VOICEPEAK_PATH.exists():
+        raise FileNotFoundError(f"VOICEPEAK executable not found at {VOICEPEAK_PATH}")
+
+    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
+
+    output_mp3_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = int(time.time() * 1000)
+    pid = os.getpid()
+    work_dir = output_mp3_path.parent / f"_vp_tmp_{pid}_{timestamp}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        chunks = split_text_for_voicepeak(text, max_chars=120)
+        if not chunks:
+            raise ValueError("No text provided for speech synthesis.")
+
+        wav_files = []
+        for idx, chunk in enumerate(chunks):
+            temp_txt = work_dir / f"chunk_{idx:04d}.txt"
+            temp_wav = work_dir / f"chunk_{idx:04d}.wav"
+            temp_txt.write_text(chunk, encoding="utf-8")
+
+            vp_cmd = [
+                str(VOICEPEAK_PATH),
+                "-t", str(temp_txt),
+                "-n", narrator,
+                "-o", str(temp_wav)
+            ]
+            res = subprocess.run(vp_cmd, capture_output=True, text=True, check=False)
+            if res.returncode != 0:
+                err_msg = (res.stderr or res.stdout or "").strip()
+                raise RuntimeError(f"VOICEPEAK failed on chunk {idx} (code {res.returncode}): {err_msg}")
+
+            if not temp_wav.exists() or temp_wav.stat().st_size == 0:
+                raise RuntimeError(f"VOICEPEAK produced no output file for chunk {idx}")
+
+            wav_files.append(temp_wav)
+
+        # If single chunk, convert directly; if multiple chunks, concatenate using ffmpeg
+        if len(wav_files) == 1:
+            ff_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-i", str(wav_files[0]),
+                "-b:a", "192k",
+                str(output_mp3_path)
+            ]
+        else:
+            concat_list = work_dir / "concat_list.txt"
+            with open(concat_list, "w", encoding="utf-8") as f:
+                for w in wav_files:
+                    escaped = str(w.resolve()).replace("\\", "/")
+                    f.write(f"file '{escaped}'\n")
+
+            ff_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list),
+                "-b:a", "192k",
+                str(output_mp3_path)
+            ]
+
+        ff_res = subprocess.run(ff_cmd, capture_output=True, text=True, check=False)
+        if ff_res.returncode != 0:
+            err_msg = (ff_res.stderr or ff_res.stdout or "").strip()
+            raise RuntimeError(f"ffmpeg conversion failed (code {ff_res.returncode}): {err_msg}")
+
+        if not output_mp3_path.exists() or output_mp3_path.stat().st_size == 0:
+            raise RuntimeError(f"ffmpeg produced no MP3 file at {output_mp3_path}")
+
+    finally:
+        # Clean up temporary working directory
+        if work_dir.exists():
+            try:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+
+async def generate_speech_voicepeak(text: str, output_path: Path, narrator: str = DEFAULT_VOICE):
+    """Generate MP3 audio from text using local VOICEPEAK CLI and ffmpeg."""
+    print(f"[*] Step C: Synthesizing speech with VOICEPEAK (narrator: {narrator})...")
+    t0 = time.time()
+    await asyncio.to_thread(_synthesize_voicepeak_sync, text, output_path, narrator)
+    elapsed = time.time() - t0
+    file_size_kb = output_path.stat().st_size / 1024
+    print(f"  [+] Generated audio file via VOICEPEAK: {output_path} ({file_size_kb:.1f} KB) in {elapsed:.2f}s")
+
+
+async def generate_speech_edge_tts(text: str, output_path: Path, voice: str = FALLBACK_EDGE_VOICE):
     """Generate MP3 audio from text using Edge-TTS."""
     print(f"[*] Step C: Synthesizing speech with edge-tts (voice: {voice})...")
     t0 = time.time()
-    
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(str(output_path))
-    
     elapsed = time.time() - t0
     file_size_kb = output_path.stat().st_size / 1024
-    print(f"  [+] Generated audio file: {output_path} ({file_size_kb:.1f} KB) in {elapsed:.2f}s")
+    print(f"  [+] Generated audio file via edge-tts: {output_path} ({file_size_kb:.1f} KB) in {elapsed:.2f}s")
 
 
-def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL, max_pages: int = 10) -> dict:
+async def generate_speech_async(text: str, output_path: Path, voice: str = DEFAULT_VOICE, engine: str = DEFAULT_TTS_ENGINE):
+    """
+    Generate MP3 audio from text.
+    Primary engine is VOICEPEAK (default: 'Japanese Female 2').
+    Automatically falls back to Edge-TTS ('ja-JP-NanamiNeural') if VOICEPEAK fails or is unavailable.
+    """
+    chosen_engine = engine
+    if voice and voice.startswith("ja-JP-"):
+        chosen_engine = "edge_tts"
+
+    if chosen_engine == "voicepeak":
+        try:
+            await generate_speech_voicepeak(text, output_path, narrator=voice)
+            return
+        except Exception as e:
+            print(f"  [!] VOICEPEAK synthesis failed ({e}). Automatically falling back to Edge-TTS ({FALLBACK_EDGE_VOICE})...")
+
+    edge_voice = voice if (voice and voice.startswith("ja-JP-")) else FALLBACK_EDGE_VOICE
+    await generate_speech_edge_tts(text, output_path, voice=edge_voice)
+
+
+def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL, max_pages: int = 10, engine: str = DEFAULT_TTS_ENGINE) -> dict:
     """Run full pipeline: Multipage Extract -> Rewrite -> TTS."""
     total_t0 = time.time()
     print("=" * 60)
     print("Readout PoC Pipeline Starting (with Multipage Support)")
     print(f"Target URL: {url}")
-    print(f"Voice Model: {voice}")
+    print(f"TTS Engine: {engine}")
+    print(f"Voice / Narrator: {voice}")
     print(f"LLM Model: {model}")
     print("=" * 60)
 
@@ -418,7 +591,7 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
     print(f"  [+] Saved script text to: {txt_path}")
 
     # Step C: TTS
-    asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice))
+    asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice, engine=engine))
 
     total_time = time.time() - total_t0
     file_size_kb = output_mp3_path.stat().st_size / 1024
@@ -435,6 +608,7 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
         "output_txt": str(txt_path),
         "file_size_kb": file_size_kb,
         "total_time_seconds": total_time,
+        "engine": engine,
         "voice": voice,
         "model": model,
     }
@@ -450,7 +624,8 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Readout PoC: Web URL to Podcast Audio (Multipage)")
     parser.add_argument("url", nargs="?", default=DEFAULT_TEST_URL, help=f"Target URL (default: {DEFAULT_TEST_URL})")
-    parser.add_argument("--voice", default=DEFAULT_VOICE, help=f"Edge-TTS voice (default: {DEFAULT_VOICE})")
+    parser.add_argument("--voice", default=DEFAULT_VOICE, help=f"Voice / Narrator name (default: {DEFAULT_VOICE})")
+    parser.add_argument("--engine", default=DEFAULT_TTS_ENGINE, choices=["voicepeak", "edge_tts"], help=f"TTS engine (default: {DEFAULT_TTS_ENGINE})")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Gemini model (default: {DEFAULT_MODEL})")
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages to crawl (default: 10)")
     parser.add_argument("--output", default=str(BASE_DIR / "output" / "test_output.mp3"), help="Output MP3 path")
@@ -460,6 +635,7 @@ if __name__ == "__main__":
         url=args.url,
         output_mp3_path=Path(args.output).resolve(),
         voice=args.voice,
+        engine=args.engine,
         model=args.model,
         max_pages=args.max_pages
     )
