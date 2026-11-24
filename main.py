@@ -10,7 +10,8 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+import requests
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -130,34 +131,83 @@ class AddFeedRequest(BaseModel):
     url: str
 
 
+def is_pdf_url(url: str) -> bool:
+    """Check if a URL points directly to a PDF resource."""
+    clean = url.split("?")[0].split("#")[0].lower()
+    if clean.endswith(".pdf"):
+        return True
+    try:
+        resp = requests.head(
+            url,
+            allow_redirects=True,
+            timeout=5,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        )
+        content_type = resp.headers.get("content-type", "").lower()
+        if "application/pdf" in content_type:
+            return True
+    except Exception:
+        pass
+    return False
+
 
 async def process_item_task(item_id: str, voice: Optional[str] = None, model: Optional[str] = None):
-    """Background task to extract content, rewrite with Gemini, and generate MP3."""
+    """Background task to extract content (web or PDF), rewrite with Gemini, and generate MP3."""
     item = queue_manager.get_item(item_id)
     if not item:
         return
 
     queue_manager.update_item(item_id, status="processing")
-    url = item["url"]
+    url = item.get("url", "")
     chosen_voice = voice or poc_pipeline.DEFAULT_VOICE
     chosen_model = model or poc_pipeline.DEFAULT_MODEL
 
     try:
-        # Step A: Extract
-        extracted = poc_pipeline.extract_content_from_url(url)
-        title = extracted["title"]
-        if (not title or title == "無題の記事") and item.get("title") and item.get("title") != "URLを解析中...":
-            title = item["title"]
-        page_count = extracted.get("page_count", 1)
-        queue_manager.update_item(item_id, title=title, page_count=page_count)
-
-        # Step B: Rewrite
-        script_text = poc_pipeline.rewrite_for_audio(
-            title,
-            extracted["content"],
-            site_name=extracted.get("site_name", ""),
-            model_name=chosen_model
+        is_pdf = (
+            item.get("item_type") == "pdf"
+            or url.startswith("upload:")
+            or (queue_manager.PDF_DIR / f"{item_id}.pdf").exists()
+            or is_pdf_url(url)
         )
+
+        if is_pdf:
+            print(f"[*] Processing PDF item {item_id}: {url}")
+            pdf_file = queue_manager.PDF_DIR / f"{item_id}.pdf"
+            if pdf_file.exists():
+                pdf_bytes = pdf_file.read_bytes()
+                orig_name = item.get("original_filename") or item.get("title") or "document.pdf"
+            else:
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                resp = requests.get(url, headers=headers, timeout=45)
+                resp.raise_for_status()
+                pdf_bytes = resp.content
+                orig_name = url.split("/")[-1].split("?")[0] or "document.pdf"
+
+            rewritten = poc_pipeline.rewrite_pdf_for_audio(
+                pdf_bytes,
+                filename=orig_name,
+                model_name=chosen_model
+            )
+            title = rewritten["title"]
+            script_text = rewritten["script_text"]
+            page_count = 1
+            queue_manager.update_item(item_id, title=title, page_count=page_count, item_type="pdf")
+        else:
+            # Step A: Web Extract
+            extracted = poc_pipeline.extract_content_from_url(url)
+            title = extracted["title"]
+            if (not title or title == "無題の記事") and item.get("title") and item.get("title") != "URLを解析中...":
+                title = item["title"]
+            page_count = extracted.get("page_count", 1)
+            queue_manager.update_item(item_id, title=title, page_count=page_count, item_type="web")
+
+            # Step B: Rewrite
+            script_text = poc_pipeline.rewrite_for_audio(
+                title,
+                extracted["content"],
+                site_name=extracted.get("site_name", ""),
+                model_name=chosen_model
+            )
 
         # Save script text
         audio_filename = item["audio_filename"] or f"{item_id}.mp3"
@@ -178,7 +228,7 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
             # Fallback estimation: ~5 chars per second for Japanese speech
             duration_sec = round(len(script_text) / 5.5, 1)
 
-        # Summary preview: First 120 chars
+        # Summary preview: First 150 chars
         summary = script_text[:150].replace("\n", " ").strip()
         if len(script_text) > 150:
             summary += "..."
@@ -246,12 +296,20 @@ async def get_queue():
 
 @app.post("/api/queue")
 async def add_to_queue(payload: AddQueueRequest, background_tasks: BackgroundTasks):
-    """Add a new URL to the queue and trigger async pipeline."""
+    """Add a new URL to the queue (HTML article or PDF URL) and trigger async pipeline."""
     url = str(payload.url).strip()
     if not url.startswith("http://") and not url.startswith("https://"):
         raise HTTPException(status_code=400, detail="Invalid URL scheme. Must start with http:// or https://")
 
-    item = queue_manager.add_item(url=url)
+    is_pdf = is_pdf_url(url)
+    item_type = "pdf" if is_pdf else "web"
+    initial_title = Path(url.split("?")[0]).stem if is_pdf else None
+
+    item = queue_manager.add_item(
+        url=url,
+        title=initial_title,
+        item_type=item_type
+    )
     background_tasks.add_task(
         process_item_task,
         item_id=item["id"],
@@ -259,6 +317,63 @@ async def add_to_queue(payload: AddQueueRequest, background_tasks: BackgroundTas
         model=payload.model,
     )
     return item
+
+
+@app.post("/api/upload-pdf")
+async def upload_pdf(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    voice: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+):
+    """Upload a PDF file and enqueue it for audio synthesis."""
+    filename = file.filename or "uploaded.pdf"
+    if not filename.lower().endswith(".pdf") and (file.content_type and "pdf" not in file.content_type.lower()):
+        raise HTTPException(status_code=400, detail="PDFファイル（.pdf）を指定してください。")
+
+    content = await file.read()
+    if not content or len(content) == 0:
+        raise HTTPException(status_code=400, detail="アップロードされたファイルが空です。")
+
+    # Limit to 50MB
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="ファイルサイズが上限（50MB）を超えています。")
+
+    clean_stem = Path(filename).stem.replace("_", " ").strip()
+    initial_title = f"{clean_stem}"
+
+    item = queue_manager.add_item(
+        url=f"upload:{filename}",
+        title=initial_title,
+        item_type="pdf",
+        original_filename=filename,
+    )
+
+    # Save uploaded PDF to data/pdfs/{item_id}.pdf
+    pdf_path = queue_manager.PDF_DIR / f"{item['id']}.pdf"
+    pdf_path.write_bytes(content)
+
+    background_tasks.add_task(
+        process_item_task,
+        item_id=item["id"],
+        voice=voice,
+        model=model,
+    )
+
+    return item
+
+
+@app.get("/pdf/{item_id}.pdf")
+async def get_pdf_file(item_id: str):
+    """Serve uploaded PDF file."""
+    pdf_file = queue_manager.PDF_DIR / f"{item_id}.pdf"
+    if not pdf_file.exists():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    return FileResponse(
+        pdf_file,
+        media_type="application/pdf",
+        filename=f"{item_id}.pdf"
+    )
 
 
 HTML_POPUP_SUCCESS = """<!DOCTYPE html>
@@ -510,7 +625,13 @@ async def add_via_bookmarklet(
         )
 
     clean_title = title.strip() if title else ""
-    item = queue_manager.add_item(url=clean_url, title=clean_title or None)
+    is_pdf = is_pdf_url(clean_url)
+    item_type = "pdf" if is_pdf else "web"
+    item = queue_manager.add_item(
+        url=clean_url,
+        title=clean_title or (Path(clean_url.split("?")[0]).stem if is_pdf else None),
+        item_type=item_type,
+    )
     background_tasks.add_task(
         process_item_task,
         item_id=item["id"],

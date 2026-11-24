@@ -11,4 +11,5 @@ aiofiles>=23.2.1
 mutagen>=1.47.0
 pillow>=10.0.0
 feedparser>=6.0.11
+python-multipart>=0.0.9
 

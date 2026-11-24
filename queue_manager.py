@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+PDF_DIR = DATA_DIR / "pdfs"
 QUEUE_FILE = DATA_DIR / "queue.json"
 OUTPUT_DIR = BASE_DIR / "output"
 
@@ -18,6 +19,7 @@ _lock = threading.Lock()
 def ensure_dirs():
     """Ensure data and output directories exist."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if not QUEUE_FILE.exists():
         QUEUE_FILE.write_text("[]", encoding="utf-8")
@@ -62,7 +64,12 @@ def get_item(item_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def add_item(url: str, title: Optional[str] = None) -> Dict[str, Any]:
+def add_item(
+    url: str,
+    title: Optional[str] = None,
+    item_type: str = "web",
+    original_filename: Optional[str] = None
+) -> Dict[str, Any]:
     """Create a new queue item with status 'pending'."""
     items = load_queue()
     item_id = str(uuid.uuid4())[:8]
@@ -78,6 +85,8 @@ def add_item(url: str, title: Optional[str] = None) -> Dict[str, Any]:
         "status": "pending",  # pending -> processing -> ready -> listened (or failed)
         "error_message": None,
         "page_count": 1,
+        "item_type": item_type,  # "web" or "pdf"
+        "original_filename": original_filename,
         "created_at": now,
     }
     items.append(new_item)
@@ -133,5 +142,12 @@ def delete_item(item_id: str) -> bool:
                     txt_path.unlink()
                 except Exception:
                     pass
+        # Delete uploaded PDF if present
+        pdf_file = PDF_DIR / f"{item_id}.pdf"
+        if pdf_file.exists():
+            try:
+                pdf_file.unlink()
+            except Exception:
+                pass
         return True
     return False

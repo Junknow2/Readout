@@ -43,7 +43,7 @@ elif LIFELOG_ENV_PATH.exists():
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 DEFAULT_MODEL = "gemini-3.8-flash"
-FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
 VOICEPEAK_PATH = Path(os.getenv("VOICEPEAK_PATH", r"C:\Program Files\VOICEPEAK\voicepeak.exe"))
 DEFAULT_VOICE = "Japanese Female 2"  # VOICEPEAK narrator
 DEFAULT_TTS_ENGINE = "voicepeak"    # "voicepeak" or "edge_tts"
@@ -85,6 +85,41 @@ PODCAST_REWRITE_PROMPT = """\
 【元記事本文】
 {content}
 """
+
+PDF_REWRITE_PROMPT = """\
+あなたは歩行中やランニング中、移動中に耳で聴いてインプットするための「音声ナレーション原稿」の専属プロライターです。
+
+添付されたPDFドキュメント（学術論文、技術レポート、調査資料、スライド、白書など）を精読し、耳で聴くだけでスッと情景や論理展開が頭に入ってくる「自然で無駄のない日本語ナレーション原稿」を作成してください。
+
+【重要なリライト要件】
+1. **タイトルの特定と構成**:
+   - ドキュメント全体から最も適切で簡潔なタイトル（原題、論文名、または日本語訳タイトル）を特定してください。
+   - 出力の1行目は必ず「TITLE: {特定したタイトル}」としてください。
+   - 2行目以降のナレーション原稿（本文）は、必ず「{特定したタイトル}についての解説。」というシンプルな宣言から始めて、即座に本文の解説に入ってください。
+2. **冒頭・結びの無駄な挨拶の完全排除**:
+   - 「こんにちは」「〇〇の時間です」「今日も良い一日を」「リスナーの皆さん」といったラジオ風・ポッドキャスト風の前置き挨拶や結びの掛け声は【一切出力しないでください】。
+   - 結びも応援や挨拶は入れず、ドキュメントの核心・結論のまとめで潔く終了してください。
+3. **ノイズの完全無視・除外**:
+   - 脚注（Footnotes）、ヘッダー、フッター、ページ番号、図表番号や細かな注記、参考文献リスト（References / Bibliography）、謝辞（Acknowledgements）などは【完全に無視・除外】してください。
+   - Markdownの見出し記号（# や ##）、箇条書き記号（* や - や ・）、アスタリスク、波線、絵文字は一切出力しないでください。音声合成エンジンが記号をそのまま読んでしまうのを防ぐため、句読点（「、」「。」）や疑問符・感嘆符のみを用いたプレーンテキストにしてください。
+4. **構造・2段組のシームレス結合**:
+   - 2段組（2-column layout）やページ跨ぎの文章を、文脈や論理の途切れがないようにシームレスに結合して読んでください。
+   - 複雑な数式や図表の数値羅列は避け、その意味や導かれる結論を言葉で分かりやすく噛み砕いて説明してください。
+5. **耳心地の良さと翻訳・口語化**:
+   - 英文・和文問わず、耳で聴きやすい自然な日本語ナレーション（「です・ます」調）にリライトしてください（英語論文等の場合は自然な日本語翻訳）。
+   - 1文を短くし、テンポよく心地よい話し言葉にしてください。難解な専門用語が出るときは平易な補足や言い換えを交えてください。
+
+【出力形式】
+TITLE: {特定したタイトル}
+{特定したタイトル}についての解説。{ここから本文のナレーション原稿...}
+"""
+
+
+def sanitize_script_for_tts(text: str) -> str:
+    """Strip markdown markers and symbols that TTS engines might read literally."""
+    text = re.sub(r'[*_#`~]', '', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 def clean_path_stem(path: str) -> str:
@@ -374,12 +409,87 @@ def rewrite_for_audio(title: str, content: str, site_name: str = "", model_name:
             script_text = response.text.strip()
             elapsed = time.time() - t0
             print(f"  [+] Successfully generated script ({len(script_text)} chars) using {model} in {elapsed:.2f}s")
-            return script_text
+            return sanitize_script_for_tts(script_text)
         except Exception as e:
             print(f"  [-] Failed with model {model}: {e}")
             last_error = e
 
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+
+
+def rewrite_pdf_for_audio(
+    pdf_bytes: bytes,
+    filename: str = "",
+    model_name: str = DEFAULT_MODEL
+) -> dict:
+    """
+    Rewrite PDF document into natural audio podcast narration script using Gemini multimodal input.
+    Extracts document title, excludes footnotes/references/headers/footers, and rewrites body for listening.
+    Returns dict containing 'title', 'script_text', and 'model'.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set. Check .env file.")
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+
+    models_to_try = [model_name] + [m for m in FALLBACK_MODELS if m != model_name]
+
+    last_error = None
+    for model in models_to_try:
+        try:
+            print(f"[*] Step B (PDF): Analyzing & rewriting PDF with {model}...")
+            t0 = time.time()
+            response = client.models.generate_content(
+                model=model,
+                contents=[pdf_part, PDF_REWRITE_PROMPT],
+                config=types.GenerateContentConfig(
+                    temperature=0.7,
+                )
+            )
+            raw_text = response.text.strip()
+            elapsed = time.time() - t0
+            print(f"  [+] Successfully generated PDF script ({len(raw_text)} chars) using {model} in {elapsed:.2f}s")
+
+            # Parse TITLE and script body
+            lines = raw_text.splitlines()
+            extracted_title = ""
+            script_body_lines = []
+
+            for idx, line in enumerate(lines):
+                line_stripped = line.strip()
+                if line_stripped.upper().startswith("TITLE:"):
+                    if not extracted_title:
+                        extracted_title = line_stripped[6:].strip()
+                else:
+                    script_body_lines.append(line)
+
+            script_text = "\n".join(script_body_lines).strip()
+
+            # Fallback title if not detected in output
+            if not extracted_title:
+                if filename:
+                    extracted_title = Path(filename).stem.replace("_", " ").strip()
+                else:
+                    extracted_title = "PDFドキュメント"
+
+            # Ensure script body starts with the required phrase
+            expected_prefix = f"{extracted_title}についての解説。"
+            if not script_text.startswith(expected_prefix) and not script_text.startswith(f"{extracted_title}についての解説"):
+                script_text = f"{expected_prefix}\n\n{script_text}"
+
+            script_text = sanitize_script_for_tts(script_text)
+
+            return {
+                "title": extracted_title,
+                "script_text": script_text,
+                "model": model,
+            }
+        except Exception as e:
+            print(f"  [-] Failed with model {model}: {e}")
+            last_error = e
+
+    raise RuntimeError(f"All Gemini models failed for PDF. Last error: {last_error}")
 
 
 def split_text_for_voicepeak(text: str, max_chars: int = 120) -> list[str]:
@@ -621,21 +731,90 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
     return result
 
 
+def run_pdf_pipeline(
+    pdf_bytes: bytes,
+    output_mp3_path: Path,
+    filename: str = "",
+    voice: str = DEFAULT_VOICE,
+    model: str = DEFAULT_MODEL,
+    engine: str = DEFAULT_TTS_ENGINE
+) -> dict:
+    """Run full PDF pipeline: Multimodal Gemini rewrite -> TTS (VOICEPEAK with Edge-TTS fallback)."""
+    total_t0 = time.time()
+    print("=" * 60)
+    print("Readout PDF Pipeline Starting")
+    print(f"Filename: {filename}")
+    print(f"TTS Engine: {engine}")
+    print(f"Voice / Narrator: {voice}")
+    print(f"LLM Model: {model}")
+    print("=" * 60)
+
+    rewritten = rewrite_pdf_for_audio(pdf_bytes, filename=filename, model_name=model)
+    title = rewritten["title"]
+    script_text = rewritten["script_text"]
+
+    output_mp3_path.parent.mkdir(parents=True, exist_ok=True)
+    txt_path = output_mp3_path.with_suffix(".txt")
+    txt_path.write_text(script_text, encoding="utf-8")
+    print(f"  [+] Saved script text to: {txt_path}")
+
+    asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice, engine=engine))
+
+    total_time = time.time() - total_t0
+    file_size_kb = output_mp3_path.stat().st_size / 1024
+
+    result = {
+        "title": title,
+        "filename": filename,
+        "script_chars": len(script_text),
+        "script_preview": script_text[:250] + "...",
+        "output_mp3": str(output_mp3_path),
+        "output_txt": str(txt_path),
+        "file_size_kb": file_size_kb,
+        "total_time_seconds": total_time,
+        "engine": engine,
+        "voice": voice,
+        "model": model,
+    }
+
+    print("=" * 60)
+    print(f"PDF Pipeline Completed Successfully in {total_time:.2f} seconds!")
+    print(f"Title: {title}")
+    print(f"Audio Output: {output_mp3_path} ({file_size_kb:.1f} KB)")
+    print("=" * 60)
+    return result
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Readout PoC: Web URL to Podcast Audio (Multipage)")
-    parser.add_argument("url", nargs="?", default=DEFAULT_TEST_URL, help=f"Target URL (default: {DEFAULT_TEST_URL})")
+    parser = argparse.ArgumentParser(description="Readout PoC: Web URL or PDF to Podcast Audio")
+    parser.add_argument("target", nargs="?", default=DEFAULT_TEST_URL, help=f"Target URL or local PDF file path (default: {DEFAULT_TEST_URL})")
     parser.add_argument("--voice", default=DEFAULT_VOICE, help=f"Voice / Narrator name (default: {DEFAULT_VOICE})")
     parser.add_argument("--engine", default=DEFAULT_TTS_ENGINE, choices=["voicepeak", "edge_tts"], help=f"TTS engine (default: {DEFAULT_TTS_ENGINE})")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Gemini model (default: {DEFAULT_MODEL})")
-    parser.add_argument("--max-pages", type=int, default=10, help="Max pages to crawl (default: 10)")
+    parser.add_argument("--max-pages", type=int, default=10, help="Max pages to crawl for web URLs (default: 10)")
     parser.add_argument("--output", default=str(BASE_DIR / "output" / "test_output.mp3"), help="Output MP3 path")
     args = parser.parse_args()
 
-    run_pipeline(
-        url=args.url,
-        output_mp3_path=Path(args.output).resolve(),
-        voice=args.voice,
-        engine=args.engine,
-        model=args.model,
-        max_pages=args.max_pages
-    )
+    target_path = Path(args.target)
+    out_path = Path(args.output).resolve()
+
+    if target_path.exists() and target_path.suffix.lower() == ".pdf":
+        print(f"Detected local PDF file: {target_path}")
+        pdf_data = target_path.read_bytes()
+        run_pdf_pipeline(
+            pdf_bytes=pdf_data,
+            output_mp3_path=out_path,
+            filename=target_path.name,
+            voice=args.voice,
+            engine=args.engine,
+            model=args.model
+        )
+    else:
+        run_pipeline(
+            url=args.target,
+            output_mp3_path=out_path,
+            voice=args.voice,
+            engine=args.engine,
+            model=args.model,
+            max_pages=args.max_pages
+        )

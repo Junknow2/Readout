@@ -2,16 +2,28 @@
 
 マラソンや屋外ランニング中に「耳で聴いて知識をインプットする」ためのパーソナル音声ニュース・ポッドキャスト生成プラットフォーム。
 
-Web上の記事（技術ブログ、note、海外テックニュース等）のURLを入力すると、本文抽出 ➜ Gemini による耳用リライト・翻訳 ➜ **ローカル音声合成「VOICEPEAK」（ナレーター: 女性2 / Japanese Female 2）**による圧倒的に自然でクリアなナレーション音声（192kbps MP3）を非同期自動生成（Edge-TTS 自動フォールバック対応）。屋外や直射日光下でも操作しやすい**高視認性PWA（Progressive Web App）**および**Pocket Casts等で購読できるプライベートPodcast RSSフィード**を提供します。
+Web上の記事（技術ブログ、note、海外テックニュース等）のURLや**PDFドキュメント（学術論文、技術レポート、調査資料等）**を入力・アップロードすると、本文抽出 ➜ Gemini 3.8 Flash による耳用リライト・翻訳 ➜ **ローカル音声合成「VOICEPEAK」（ナレーター: 女性2 / Japanese Female 2）**による圧倒的に自然でクリアなナレーション音声（192kbps MP3）を非同期自動生成（Edge-TTS 自動フォールバック対応）。屋外や直射日光下でも操作しやすい**高視認性PWA（Progressive Web App）**および**Pocket Casts等で購読できるプライベートPodcast RSSフィード**を提供します。
 
 ---
 
 ## 🚀 主な機能と特徴
 
-1. **FastAPI バックエンド & 非同期パイプライン (`main.py`, `queue_manager.py`)**:
+1. **Gemini 3.8 Flash ネイティブ PDF 解析 ＆ 音声化 (`poc_pipeline.py`, `main.py`)**:
+   - **ドラッグ＆ドロップ ＆ スマホファイル選択**: PWA画面の専用エリアへPDFファイルをドロップ、またはタップして端末内のPDFを選択するだけでワンステップ登録。
+   - **PDF 直接URL対応**: `.pdf` で終わるURLや `application/pdf` のURLも `/api/queue` 経由で自動判別・直接ダウンロードしてパイプラインへ投入。
+   - **Gemini 3.8 Flash マルチモーダルネイティブ解析**: `google-genai` SDK の `types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")` を採用。外部OCRや重厚なPDF解析ライブラリ不要で、英語論文や複雑な2段組・数式・図表の文脈を直接高精度に理解。
+   - **学術・技術資料用リライトプロンプト**:
+     - 脚注（Footnotes）、ヘッダー、フッター、ページ番号、図表注釈、参考文献リスト（References / Bibliography）を【完全に無視・除外】。
+     - ラジオ風挨拶を徹底排除し、「{タイトル}についての解説。」から即座に本題へ導入。
+     - 2段組やページ跨ぎの文をシームレスに結合し、自然な日本語「です・ます調」のナレーション原稿として出力。
+   - **VOICEPEAK（女性2）高音質朗読**: 生成された原稿を120文字チャンクに最適分割し、VOICEPEAK で美しい日本語音声化 ➜ ffmpeg で 192kbps MP3 に結合。
+
+2. **FastAPI バックエンド & 非同期パイプライン (`main.py`, `queue_manager.py`)**:
    - 内部ポート: `127.0.0.1:8002`
    - FastAPI BackgroundTasks による非同期音声生成（キュー投入後即レスポンス）。
    - キュー管理（`data/queue.json`）による状態永続化（`pending` ➜ `processing` ➜ `ready` ➜ `listened`）。
+   - PDFアップロード: `POST /api/upload-pdf`（アップロードされたファイルは `data/pdfs/` へ保存、削除時に自動クリーンアップ）。
+   - PDF配信: `GET /pdf/{id}.pdf` で原本PDFの確認・ダウンロードが可能。
    - 音声ストリーミング: `GET /audio/{filename}`（HTTP Range 206 Partial Content に対応し、シーク再生も滑らか）。
    - プライベート Podcast RSS: `GET /feed.xml`（Pocket Casts や Apple Podcasts で直接購読可能）。
 
@@ -53,26 +65,29 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
 Readout/
 ├── data/
 │   ├── queue.json         # 再生キュー永続化ストア
-│   └── feeds.json         # 購読RSSフィード設定
+│   ├── feeds.json         # 購読RSSフィード設定
+│   ├── pdfs/              # アップロードされた原本PDFファイル保管
+│   └── logs/              # バックグラウンド起動ログ (stdout/stderr)
 ├── output/                # 生成された MP3 および テキスト原稿
 ├── static/
 │   ├── css/
-│   │   └── style.css      # ランナー特化ハイコントラスト CSS (タブ・RSSリーダー含む)
+│   │   └── style.css      # ランナー特化ハイコントラスト CSS (タブ・PDF・RSS含む)
 │   ├── js/
-│   │   └── app.js         # PWA クライアントロジック (MediaSession/キャッシュ/RSS)
+│   │   └── app.js         # PWA クライアントロジック (MediaSession/キャッシュ/PDF/RSS)
 │   ├── icons/             # 192x192, 512x512 PWA アプリアイコン
 │   ├── manifest.json      # PWA Web App Manifest
 │   └── sw.js              # オフライン & Rangeリクエスト対応 Service Worker
 ├── templates/
-│   └── index.html         # PWA UI テンプレート
-├── main.py                # FastAPI メインアプリケーション
-├── queue_manager.py       # キュー永続化マネージャー
+│   └── index.html         # PWA UI テンプレート (PDFドロップゾーン完備)
+├── main.py                # FastAPI メインアプリケーション (PDF/キュー/RSS API)
+├── queue_manager.py       # キュー永続化マネージャー (PDF削除連動)
 ├── feed_manager.py        # RSSフィード購読・タイムライン管理
-├── poc_pipeline.py        # 抽出・Geminiリライト・VOICEPEAK/Edge-TTS パイプライン
-├── test_verification.py   # 自動結合テストスクリプト
+├── poc_pipeline.py        # 抽出・Gemini PDF/Webリライト・VOICEPEAK/Edge-TTS パイプライン
+├── test_verification.py   # Web & RSS 自動結合テストスクリプト
 ├── test_voicepeak_verification.py # VOICEPEAK 統合・音声検証テストスクリプト
+├── test_pdf_verification.py       # PDF 解析・VOICEPEAK 音声化結合テストスクリプト
 ├── run_server.bat         # サーバー起動バッチ
-├── run_server.ps1         # サーバー起動 PowerShell
+├── run_server.ps1         # サーバー起動 PowerShell (Win32_Process非表示自立起動)
 ├── requirements.txt       # 依存ライブラリ
 └── venv/                  # 専用仮想環境 (Python 3.12)
 
@@ -112,9 +127,11 @@ cd C:\Users\Jun\Documents\Dev\Readout
 | `GET` | `/manifest.json` | Web App Manifest |
 | `GET` | `/sw.js` | Service Worker (Rootスコープ配信) |
 | `GET` | `/api/queue` | 未読キューアイテム一覧取得 |
-| `POST` | `/api/queue` | 新規URL追加（バックグラウンド生成開始） |
+| `POST` | `/api/queue` | 新規URL追加（Web記事 / PDF直リンク対応、バックグラウンド生成開始） |
+| `POST` | `/api/upload-pdf` | **PDFファイルアップロード（Gemini 3.8 Flash ＋ VOICEPEAK 音声化）** |
+| `GET` | `/pdf/{id}.pdf` | アップロード済み原本PDFダウンロード・プレビュー |
 | `POST` | `/api/queue/{id}/listened` | 既読フラグ更新（キューから除外） |
-| `DELETE` | `/api/queue/{id}` | キュー削除およびMP3ファイル削除 |
+| `DELETE` | `/api/queue/{id}` | キュー削除およびMP3/原本PDFファイル削除 |
 | `GET` | `/api/feeds` | 購読中RSSフィード一覧取得 |
 | `POST` | `/api/feeds` | 新規RSSフィード購読登録 |
 | `DELETE` | `/api/feeds/{id}` | RSSフィード購読解除 |

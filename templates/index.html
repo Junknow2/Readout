@@ -65,6 +65,26 @@
         <button id="btn-bookmarklet-tip" class="link-btn-text">ブックマークレットを使う</button>
       </div>
 
+      <!-- PDF Dropzone & Upload Card -->
+      <section class="pdf-upload-card" id="pdf-dropzone">
+        <input type="file" id="pdf-file-input" accept="application/pdf,.pdf" style="display: none;">
+        <div class="pdf-upload-content" id="pdf-upload-trigger">
+          <div class="pdf-upload-icon-wrap">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="12" y1="18" x2="12" y2="12"></line>
+              <polyline points="9 15 12 12 15 15"></polyline>
+            </svg>
+          </div>
+          <div class="pdf-upload-text-wrap">
+            <span class="pdf-upload-main">📁 PDFファイルをアップロード</span>
+            <span class="pdf-upload-sub">ドラッグ＆ドロップ または タップして選択（論文・資料をAI音声化）</span>
+          </div>
+          <button type="button" class="btn-pdf-browse" id="btn-pdf-browse">ファイル選択</button>
+        </div>
+      </section>
+
       <!-- Main High-Contrast Player -->
       <section class="player-card">
         <div class="player-header">
@@ -232,6 +252,6 @@
   <div id="toast" class="toast">メッセージ</div>
 
   <!-- Scripts -->
-  <script src="/static/js/app.js?v=2"></script>
+  <script src="/static/js/app.js?v=3"></script>
 </body>
 </html>

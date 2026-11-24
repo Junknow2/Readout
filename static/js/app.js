@@ -45,6 +45,10 @@
   const btnAddUrl = document.getElementById('btn-add-url');
   const queueList = document.getElementById('queue-list');
   const queueCounter = document.getElementById('queue-counter');
+  const pdfDropzone = document.getElementById('pdf-dropzone');
+  const pdfFileInput = document.getElementById('pdf-file-input');
+  const btnPdfBrowse = document.getElementById('btn-pdf-browse');
+  const pdfUploadTrigger = document.getElementById('pdf-upload-trigger');
 
   // Player DOM
   const playerTitle = document.getElementById('player-title');
@@ -244,6 +248,37 @@
       await fetchQueue();
     } catch (err) {
       alert(`エラー: ${err.message}`);
+    }
+  }
+
+  async function handlePdfUpload(file) {
+    if (!file) return;
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') || (file.type && file.type.includes('pdf'));
+    if (!isPdf) {
+      showToast('⚠️ PDFファイル（.pdf）を指定してください');
+      return;
+    }
+
+    try {
+      showToast(`📁 「${file.name}」をアップロード中...`);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/upload-pdf', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'アップロードに失敗しました' }));
+        throw new Error(err.detail || 'アップロードに失敗しました');
+      }
+
+      showToast(`✅ 「${file.name}」をキューに追加しました。Gemini解析中...`);
+      if (pdfFileInput) pdfFileInput.value = '';
+      await fetchQueue();
+    } catch (err) {
+      alert(`PDFアップロードエラー: ${err.message}`);
     }
   }
 
@@ -518,6 +553,13 @@
         pageBadgeHtml = `<span class="badge-status" style="background:rgba(59,130,246,0.18);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);">全${item.page_count}ページ結合</span>`;
       }
 
+      // PDF Badge
+      let pdfBadgeHtml = '';
+      const isPdfItem = item.item_type === 'pdf' || (item.url && item.url.startsWith('upload:')) || (item.url && item.url.toLowerCase().endsWith('.pdf'));
+      if (isPdfItem) {
+        pdfBadgeHtml = `<span class="badge-status" style="background:rgba(236,72,153,0.18);color:#f472b6;border:1px solid rgba(236,72,153,0.3);">📄 PDF</span>`;
+      }
+
       // Offline Badge
       let offlineBadgeHtml = '';
       if (isCached) {
@@ -535,6 +577,7 @@
           <h3 class="card-title">${escapeHtml(item.title)}</h3>
           <div class="card-meta">
             ${statusBadgeHtml}
+            ${pdfBadgeHtml}
             ${pageBadgeHtml}
             ${offlineBadgeHtml}
             ${durationHtml}
@@ -953,9 +996,62 @@
   }
 
   // -------------------------------------------------------------
+  // PDF Dropzone & Upload Setup
+  // -------------------------------------------------------------
+  function setupPdfUpload() {
+    if (!pdfDropzone || !pdfFileInput) return;
+
+    if (pdfUploadTrigger) {
+      pdfUploadTrigger.addEventListener('click', (e) => {
+        if (e.target !== btnPdfBrowse) {
+          pdfFileInput.click();
+        }
+      });
+    }
+
+    if (btnPdfBrowse) {
+      btnPdfBrowse.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pdfFileInput.click();
+      });
+    }
+
+    pdfFileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handlePdfUpload(e.target.files[0]);
+      }
+    });
+
+    // Drag & Drop
+    ['dragenter', 'dragover'].forEach(eventName => {
+      pdfDropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pdfDropzone.classList.add('dragover');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      pdfDropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pdfDropzone.classList.remove('dragover');
+      }, false);
+    });
+
+    pdfDropzone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      if (dt && dt.files && dt.files[0]) {
+        handlePdfUpload(dt.files[0]);
+      }
+    });
+  }
+
+  // -------------------------------------------------------------
   // Initialization & Polling loop for background queue processing
   // -------------------------------------------------------------
   setupBookmarklet();
+  setupPdfUpload();
   fetchQueue();
   setInterval(() => {
     const hasActiveTask = queue.some(it => it.status === 'pending' || it.status === 'processing');

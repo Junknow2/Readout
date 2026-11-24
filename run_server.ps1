@@ -1,16 +1,19 @@
-$ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $ScriptDir
+﻿# Readout PWA バックグラウンド起動スクリプト (ポート8002)
+$ErrorActionPreference = "SilentlyContinue"
 
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "  Readout - Marathon Audio PWA Server" -ForegroundColor Green
-Write-Host "  Running at http://127.0.0.1:8002" -ForegroundColor Yellow
-Write-Host "========================================================" -ForegroundColor Cyan
+$baseDir = "C:\Users\Jun\Documents\Dev\Readout"
+$logDir = "$baseDir\data\logs"
+if (!(Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
 
-$PythonPath = Join-Path $ScriptDir "venv\Scripts\python.exe"
-
-if (Test-Path $PythonPath) {
-    & $PythonPath -m uvicorn main:app --host 127.0.0.1 --port 8002 --reload
-} else {
-    Write-Error "Virtual environment not found at $PythonPath"
+$port8002Active = Get-NetTCPConnection -State Listen -LocalPort 8002 -ErrorAction SilentlyContinue
+if (!$port8002Active) {
+    $pythonExe = "$baseDir\venv\Scripts\python.exe"
+    $startup = [wmiclass]"Win32_ProcessStartup"
+    $startupConfig = $startup.CreateInstance()
+    $startupConfig.ShowWindow = 0
+    $process = [wmiclass]"Win32_Process"
+    $cmd = "cmd.exe /c `"`"$pythonExe`" -m uvicorn main:app --app-dir `"$baseDir`" --host 127.0.0.1 --port 8002 >> `"$logDir\uvicorn_stdout.log`" 2>> `"$logDir\uvicorn_stderr.log`"`""
+    $process.Create($cmd, $baseDir, $startupConfig) | Out-Null
 }
