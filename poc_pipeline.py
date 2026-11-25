@@ -15,6 +15,7 @@ import asyncio
 import shutil
 import subprocess
 import tempfile
+import threading
 import warnings
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -28,6 +29,11 @@ import requests
 from google import genai
 from google.genai import types
 import edge_tts
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Load environment variables
 # Look in current directory first, fallback to LifeLog/.env if needed
@@ -547,6 +553,9 @@ def split_text_for_voicepeak(text: str, max_chars: int = 120) -> list[str]:
     return chunks
 
 
+_VOICEPEAK_LOCK = threading.Lock()
+
+
 def _synthesize_voicepeak_sync(text: str, output_mp3_path: Path, narrator: str = DEFAULT_VOICE) -> None:
     """Synchronous worker to run VOICEPEAK CLI in chunks and convert/concat WAV to MP3 via ffmpeg."""
     if not VOICEPEAK_PATH.exists():
@@ -566,26 +575,27 @@ def _synthesize_voicepeak_sync(text: str, output_mp3_path: Path, narrator: str =
             raise ValueError("No text provided for speech synthesis.")
 
         wav_files = []
-        for idx, chunk in enumerate(chunks):
-            temp_txt = work_dir / f"chunk_{idx:04d}.txt"
-            temp_wav = work_dir / f"chunk_{idx:04d}.wav"
-            temp_txt.write_text(chunk, encoding="utf-8")
+        with _VOICEPEAK_LOCK:
+            for idx, chunk in enumerate(chunks):
+                temp_txt = work_dir / f"chunk_{idx:04d}.txt"
+                temp_wav = work_dir / f"chunk_{idx:04d}.wav"
+                temp_txt.write_text(chunk, encoding="utf-8")
 
-            vp_cmd = [
-                str(VOICEPEAK_PATH),
-                "-t", str(temp_txt),
-                "-n", narrator,
-                "-o", str(temp_wav)
-            ]
-            res = subprocess.run(vp_cmd, capture_output=True, text=True, check=False)
-            if res.returncode != 0:
-                err_msg = (res.stderr or res.stdout or "").strip()
-                raise RuntimeError(f"VOICEPEAK failed on chunk {idx} (code {res.returncode}): {err_msg}")
+                vp_cmd = [
+                    str(VOICEPEAK_PATH),
+                    "-t", str(temp_txt),
+                    "-n", narrator,
+                    "-o", str(temp_wav)
+                ]
+                res = subprocess.run(vp_cmd, capture_output=True, text=True, check=False)
+                if res.returncode != 0:
+                    err_msg = (res.stderr or res.stdout or "").strip()
+                    raise RuntimeError(f"VOICEPEAK failed on chunk {idx} (code {res.returncode}): {err_msg}")
 
-            if not temp_wav.exists() or temp_wav.stat().st_size == 0:
-                raise RuntimeError(f"VOICEPEAK produced no output file for chunk {idx}")
+                if not temp_wav.exists() or temp_wav.stat().st_size == 0:
+                    raise RuntimeError(f"VOICEPEAK produced no output file for chunk {idx}")
 
-            wav_files.append(temp_wav)
+                wav_files.append(temp_wav)
 
         # If single chunk, convert directly; if multiple chunks, concatenate using ffmpeg
         if len(wav_files) == 1:

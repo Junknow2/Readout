@@ -4,6 +4,7 @@ import hashlib
 import html
 import os
 import secrets
+import sys
 import time
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -22,6 +23,11 @@ from pydantic import BaseModel, HttpUrl
 import poc_pipeline
 import queue_manager
 import feed_manager
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 BASE_DIR = Path(__file__).resolve().parent

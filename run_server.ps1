@@ -14,6 +14,6 @@ if (!$port8002Active) {
     $startupConfig = $startup.CreateInstance()
     $startupConfig.ShowWindow = 0
     $process = [wmiclass]"Win32_Process"
-    $cmd = "cmd.exe /c `"`"$pythonExe`" -m uvicorn main:app --app-dir `"$baseDir`" --host 127.0.0.1 --port 8002 >> `"$logDir\uvicorn_stdout.log`" 2>> `"$logDir\uvicorn_stderr.log`"`""
+    $cmd = "cmd.exe /c `"set PYTHONUTF8=1&& set PYTHONIOENCODING=utf-8&& `"$pythonExe`" -m uvicorn main:app --app-dir `"$baseDir`" --host 127.0.0.1 --port 8002 >> `"$logDir\uvicorn_stdout.log`" 2>> `"$logDir\uvicorn_stderr.log`"`""
     $process.Create($cmd, $baseDir, $startupConfig) | Out-Null
 }
