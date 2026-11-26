@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=4">
 </head>
 <body>
   <div class="app-container">
@@ -41,12 +41,16 @@
     <!-- View Switcher Tabs -->
     <nav class="view-tabs" role="tablist">
       <button id="tab-btn-queue" class="tab-btn active" role="tab" aria-selected="true" data-tab="queue">
-        <span class="tab-icon">🏃</span>
+        <span class="tab-icon">🎧</span>
         <span class="tab-label">再生キュー</span>
       </button>
+      <button id="tab-btn-curator" class="tab-btn" role="tab" aria-selected="false" data-tab="curator">
+        <span class="tab-icon">✨</span>
+        <span class="tab-label">Curator</span>
+      </button>
       <button id="tab-btn-rss" class="tab-btn" role="tab" aria-selected="false" data-tab="rss">
-        <span class="tab-icon">📰</span>
-        <span class="tab-label">RSSリーダー</span>
+        <span class="tab-icon">📡</span>
+        <span class="tab-label">RSS</span>
       </button>
     </nav>
 
@@ -155,7 +159,63 @@
       </section>
     </div>
 
-    <!-- TAB 2: Built-in RSS Reader & Timeline -->
+    <!-- TAB 2: Personal Knowledge Curator -->
+    <div id="pane-curator" class="tab-pane" role="tabpanel" style="display: none;">
+      <!-- Curator Top Control Bar -->
+      <section class="curator-toolbar-card">
+        <div class="curator-toolbar-row">
+          <div class="curator-date-wrap">
+            <label for="curator-date-select" class="curator-date-label">📅 日付</label>
+            <select id="curator-date-select" class="curator-date-select">
+              <option value="">最新</option>
+            </select>
+          </div>
+          <button id="btn-curator-run" class="btn-curator-run" title="今すぐAIキュレーション＆事前音声化を実行">
+            <span class="run-icon">⚡</span>
+            <span>今すぐ実行</span>
+          </button>
+        </div>
+
+        <!-- Live Progress Banner -->
+        <div id="curator-status-banner" class="curator-status-banner" style="display: none;">
+          <div class="curator-status-top">
+            <span id="curator-status-msg" class="curator-status-msg">実行中...</span>
+            <span id="curator-status-pct" class="curator-status-pct">0%</span>
+          </div>
+          <div class="curator-progress-track">
+            <div id="curator-progress-bar" class="curator-progress-bar" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Sub-view Switcher -->
+        <div class="curator-subtabs">
+          <button id="subtab-daily" class="curator-subtab active" data-subtab="daily">
+            今日の推薦 (Daily Selection)
+          </button>
+          <button id="subtab-log" class="curator-subtab" data-subtab="log">
+            Research Log（候補・不採用含む）
+          </button>
+        </div>
+      </section>
+
+      <!-- Sub-pane A: Daily Selection -->
+      <div id="curator-daily-view" class="curator-view-pane">
+        <div id="curator-daily-list" class="curator-cards-list">
+          <div class="queue-empty">
+            <p class="queue-empty-title">キュレーション結果がありません</p>
+            <p>「今すぐ実行」を押すか、毎日 03:00 の自動生成をお待ちください。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-pane B: Research Log -->
+      <div id="curator-log-view" class="curator-view-pane" style="display: none;">
+        <div id="curator-log-summary" class="curator-log-summary"></div>
+        <div id="curator-log-list" class="curator-log-list"></div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Built-in RSS Reader & Timeline -->
     <div id="pane-rss" class="tab-pane" role="tabpanel" style="display: none;">
       <!-- Collapsible Feed Manager -->
       <section class="feed-manager-card">
@@ -252,6 +312,6 @@
   <div id="toast" class="toast">メッセージ</div>
 
   <!-- Scripts -->
-  <script src="/static/js/app.js?v=3"></script>
+  <script src="/static/js/app.js?v=4"></script>
 </body>
 </html>

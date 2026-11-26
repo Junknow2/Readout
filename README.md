@@ -57,6 +57,13 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - **ffmpeg concat 192kbps エンコード**: 生成されたチャンク WAV 群を ffmpeg の concat demuxer で無劣化・シームレスに結合し、192kbps MP3 として高速エンコード。作業後の一時ファイルは自動安全消去。
    - **自動フォールバック設計**: VOICEPEAK 未検出時やエラー発生時は、従来の `edge_tts`（`ja-JP-NanamiNeural`）へ自動フォールバックする安心の二重化設計。
 
+6. **Personal Knowledge Curator（AI 知的キュレーション ＆ 深夜事前音声化 ＆ フィードバック学習ループ）(`curator_sources.py`, `curator_engine.py`, `run_curator_daily.bat`)**:
+   - **多ソース巡回 ＆ 厳格なハルシネーション/ペイウォール排除**: Knowledge at Wharton、MIT Sloan Management Review、RIETI、Behavioral Scientist、The Conversation、Greenbook、Quirk's、ESOMAR、Our World in Data、Works in Progress、NBER、J-STAGE API、OpenAlex API、さらに Gemini Google Search Grounding を組み合わせ、全候補を Python 側で実アクセス・本文検証（404・ログイン壁・ペイウォール・本文不足を機械的に除外し Research Log へ記録）。
+   - **3 独立探索 ＆ 7 軸加重評価 ＆ 枠別選考**: Core / Discovery / Wild Card の 3 トラックで独立評価（**Wild Card には過去の好みプロファイルを一切渡さず過剰適合を構造的に防止**）。7 軸加重スコア（問いの深さ 20%、説明力 20%、根拠の質 20%、独自性 15%、長期的価値 10%、好奇心 10%、音声適性 5%）と関心適合度・新規性から枠別選考。
+   - **4 パート編成 ＆ 7 ステップ音声原稿**: Part 1（Core Deep Dive）、Part 2（Discovery Deep Dive）、Part 3（Wild Card）、Part 4（Connections）を 7 ステップ構成の自然な日本語ナレーション原稿として生成。
+   - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開。14 日より前の未採用 MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
+   - **待ち時間 0 秒の即キュー投入 ＆ 5 段階フィードバック**: `✨ Curator` タブからワンタップで事前音声化済み MP3 を即座にメイン再生キューへ追加（`status="ready"`）。5 段階評価＋理由チップ＋任意メモで Core 関心プロファイルを継続学習。Research Log の不採用記事も「＋ 自分で聴く」で通常キューへ投入可能。
+
 ---
 
 ## 📁 ディレクトリ構成
@@ -66,26 +73,31 @@ Readout/
 ├── data/
 │   ├── queue.json         # 再生キュー永続化ストア
 │   ├── feeds.json         # 購読RSSフィード設定
+│   ├── curator/           # Personal Knowledge Curator 成果物 (daily_*.json, scripts_*.txt, research_log_*.json, history.json, audio/)
 │   ├── pdfs/              # アップロードされた原本PDFファイル保管
-│   └── logs/              # バックグラウンド起動ログ (stdout/stderr)
+│   └── logs/              # バックグラウンド起動・Curator日次ログ
 ├── output/                # 生成された MP3 および テキスト原稿
 ├── static/
 │   ├── css/
-│   │   └── style.css      # ランナー特化ハイコントラスト CSS (タブ・PDF・RSS含む)
+│   │   └── style.css      # ランナー特化ハイコントラスト CSS (タブ・Curator・PDF・RSS含む)
 │   ├── js/
-│   │   └── app.js         # PWA クライアントロジック (MediaSession/キャッシュ/PDF/RSS)
+│   │   └── app.js         # PWA クライアントロジック (MediaSession/キャッシュ/Curator/PDF/RSS)
 │   ├── icons/             # 192x192, 512x512 PWA アプリアイコン
 │   ├── manifest.json      # PWA Web App Manifest
 │   └── sw.js              # オフライン & Rangeリクエスト対応 Service Worker
 ├── templates/
-│   └── index.html         # PWA UI テンプレート (PDFドロップゾーン完備)
-├── main.py                # FastAPI メインアプリケーション (PDF/キュー/RSS API)
+│   └── index.html         # PWA UI テンプレート (3タブ: 再生キュー / Curator / RSS)
+├── main.py                # FastAPI メインアプリケーション (Curator/PDF/キュー/RSS API)
+├── curator_sources.py     # Curator 情報ソース巡回・実アクセス検証・ペイウォール排除
+├── curator_engine.py      # Curator 7軸評価・枠別選考・7ステップ原稿・逐次VOICEPEAK音声化・学習ループ
 ├── queue_manager.py       # キュー永続化マネージャー (PDF削除連動)
 ├── feed_manager.py        # RSSフィード購読・タイムライン管理
 ├── poc_pipeline.py        # 抽出・Gemini PDF/Webリライト・VOICEPEAK/Edge-TTS パイプライン
+├── test_curator_verification.py   # Personal Knowledge Curator 自動検証テスト
 ├── test_verification.py   # Web & RSS 自動結合テストスクリプト
 ├── test_voicepeak_verification.py # VOICEPEAK 統合・音声検証テストスクリプト
 ├── test_pdf_verification.py       # PDF 解析・VOICEPEAK 音声化結合テストスクリプト
+├── run_curator_daily.bat  # 毎日03:00 自動キュレーション＆事前音声化バッチ (ReadoutDailyCurator)
 ├── run_server.bat         # サーバー起動バッチ
 ├── run_server.ps1         # サーバー起動 PowerShell (Win32_Process非表示自立起動)
 ├── requirements.txt       # 依存ライブラリ

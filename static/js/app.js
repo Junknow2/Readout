@@ -19,6 +19,15 @@
   let isLoadingArticles = false;
   let feedManagerOpen = false;
 
+  // Curator State
+  let curatorDates = [];
+  let curatorSelectedDate = '';
+  let curatorDaily = null;
+  let curatorResearchLog = null;
+  let curatorStatus = null;
+  let curatorSubTab = 'daily';
+  let curatorLoadedOnce = false;
+
   // -------------------------------------------------------------
   // DOM Elements
   // -------------------------------------------------------------
@@ -36,9 +45,26 @@
 
   // Tabs DOM
   const tabBtnQueue = document.getElementById('tab-btn-queue');
+  const tabBtnCurator = document.getElementById('tab-btn-curator');
   const tabBtnRss = document.getElementById('tab-btn-rss');
   const paneQueue = document.getElementById('pane-queue');
+  const paneCurator = document.getElementById('pane-curator');
   const paneRss = document.getElementById('pane-rss');
+
+  // Curator DOM
+  const curatorDateSelect = document.getElementById('curator-date-select');
+  const btnCuratorRun = document.getElementById('btn-curator-run');
+  const curatorStatusBanner = document.getElementById('curator-status-banner');
+  const curatorStatusMsg = document.getElementById('curator-status-msg');
+  const curatorStatusPct = document.getElementById('curator-status-pct');
+  const curatorProgressBar = document.getElementById('curator-progress-bar');
+  const subtabDaily = document.getElementById('subtab-daily');
+  const subtabLog = document.getElementById('subtab-log');
+  const curatorDailyView = document.getElementById('curator-daily-view');
+  const curatorLogView = document.getElementById('curator-log-view');
+  const curatorDailyList = document.getElementById('curator-daily-list');
+  const curatorLogSummary = document.getElementById('curator-log-summary');
+  const curatorLogList = document.getElementById('curator-log-list');
 
   // Queue View DOM
   const urlInput = document.getElementById('url-input');
@@ -143,40 +169,40 @@
   }
 
   // -------------------------------------------------------------
-  // Tab Switcher
+  // Tab Switcher (3 tabs: queue | curator | rss)
   // -------------------------------------------------------------
   function switchTab(target) {
     if (target === activeTab) return;
     activeTab = target;
 
-    if (target === 'queue') {
-      tabBtnQueue.classList.add('active');
-      tabBtnQueue.setAttribute('aria-selected', 'true');
-      tabBtnRss.classList.remove('active');
-      tabBtnRss.setAttribute('aria-selected', 'false');
+    const tabs = [
+      { key: 'queue', btn: tabBtnQueue, pane: paneQueue },
+      { key: 'curator', btn: tabBtnCurator, pane: paneCurator },
+      { key: 'rss', btn: tabBtnRss, pane: paneRss },
+    ];
+    tabs.forEach(({ key, btn, pane }) => {
+      if (!btn || !pane) return;
+      const isActive = key === target;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      pane.style.display = isActive ? 'flex' : 'none';
+    });
 
-      paneQueue.style.display = 'flex';
-      paneRss.style.display = 'none';
+    if (target === 'curator') {
+      if (!curatorLoadedOnce) {
+        curatorLoadedOnce = true;
+        fetchCuratorDaily();
+      } else {
+        fetchCuratorStatus();
+      }
     } else if (target === 'rss') {
-      tabBtnRss.classList.add('active');
-      tabBtnRss.setAttribute('aria-selected', 'true');
-      tabBtnQueue.classList.remove('active');
-      tabBtnQueue.setAttribute('aria-selected', 'false');
-
-      paneQueue.style.display = 'none';
-      paneRss.style.display = 'flex';
-
-      // Load feeds and articles if not yet loaded
-      if (feeds.length === 0) {
-        fetchFeeds();
-      }
-      if (articles.length === 0) {
-        fetchArticles();
-      }
+      if (feeds.length === 0) fetchFeeds();
+      if (articles.length === 0) fetchArticles();
     }
   }
 
   tabBtnQueue.addEventListener('click', () => switchTab('queue'));
+  if (tabBtnCurator) tabBtnCurator.addEventListener('click', () => switchTab('curator'));
   tabBtnRss.addEventListener('click', () => switchTab('rss'));
 
   // -------------------------------------------------------------
@@ -1048,6 +1074,464 @@
   }
 
   // -------------------------------------------------------------
+  // Personal Knowledge Curator UI & API
+  // -------------------------------------------------------------
+  const CURATOR_RATINGS = [
+    { val: 5, label: '非常に面白かった' },
+    { val: 4, label: '面白かった' },
+    { val: 3, label: '普通' },
+    { val: 2, label: 'あまり面白くなかった' },
+    { val: 1, label: '既に知っていた' },
+  ];
+  const CURATOR_REASON_CHIPS = [
+    '視点が新鮮',
+    '根拠が強い',
+    '実務に効く',
+    '既知だった',
+    '抽象的すぎ',
+  ];
+  const AXIS_LABELS = {
+    question_depth: '問いの深さ',
+    explanatory_power: '説明力',
+    evidence_quality: '根拠の質',
+    originality: '独自性',
+    long_term_value: '長期的価値',
+    curiosity: '好奇心',
+    audio_suitability: '音声適性',
+  };
+
+  function switchCuratorSubTab(sub) {
+    curatorSubTab = sub;
+    if (subtabDaily) subtabDaily.classList.toggle('active', sub === 'daily');
+    if (subtabLog) subtabLog.classList.toggle('active', sub === 'log');
+    if (curatorDailyView) curatorDailyView.style.display = sub === 'daily' ? 'block' : 'none';
+    if (curatorLogView) curatorLogView.style.display = sub === 'log' ? 'block' : 'none';
+  }
+
+  if (subtabDaily) subtabDaily.addEventListener('click', () => switchCuratorSubTab('daily'));
+  if (subtabLog) subtabLog.addEventListener('click', () => switchCuratorSubTab('log'));
+
+  if (curatorDateSelect) {
+    curatorDateSelect.addEventListener('change', () => {
+      curatorSelectedDate = curatorDateSelect.value;
+      fetchCuratorDaily(curatorSelectedDate);
+    });
+  }
+
+  if (btnCuratorRun) {
+    btnCuratorRun.addEventListener('click', async () => {
+      try {
+        btnCuratorRun.disabled = true;
+        const res = await fetch('/api/curator/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ synthesize_audio: true }),
+        });
+        const data = await res.json();
+        showToast(data.message || 'キュレーションを開始しました');
+        await fetchCuratorStatus();
+      } catch (err) {
+        showToast(`実行エラー: ${err.message}`);
+        btnCuratorRun.disabled = false;
+      }
+    });
+  }
+
+  function renderCuratorStatusBanner(status) {
+    if (!curatorStatusBanner || !status) return;
+    if (status.running) {
+      curatorStatusBanner.style.display = 'flex';
+      if (curatorStatusMsg) curatorStatusMsg.textContent = status.message || 'キュレーション実行中...';
+      if (curatorStatusPct) curatorStatusPct.textContent = `${status.progress || 0}%`;
+      if (curatorProgressBar) curatorProgressBar.style.width = `${status.progress || 0}%`;
+      if (btnCuratorRun) btnCuratorRun.disabled = true;
+    } else {
+      curatorStatusBanner.style.display = 'none';
+      if (btnCuratorRun) btnCuratorRun.disabled = false;
+    }
+  }
+
+  async function fetchCuratorStatus() {
+    try {
+      const res = await fetch('/api/curator/status');
+      if (!res.ok) return;
+      const prevRunning = curatorStatus && curatorStatus.running;
+      const prevReady = curatorStatus ? curatorStatus.parts_ready : 0;
+      curatorStatus = await res.json();
+      renderCuratorStatusBanner(curatorStatus);
+      // Refresh daily selection incrementally whenever a new part finishes audio or run completes
+      if (
+        (curatorStatus.running && curatorStatus.parts_ready !== prevReady) ||
+        (prevRunning && !curatorStatus.running)
+      ) {
+        await fetchCuratorDaily(curatorSelectedDate || '');
+      }
+    } catch (e) {
+      console.warn('Curator status fetch error:', e);
+    }
+  }
+
+  async function fetchCuratorDaily(dateStr = '') {
+    try {
+      const qs = dateStr ? `?date=${encodeURIComponent(dateStr)}` : '';
+      const res = await fetch(`/api/curator/daily${qs}`);
+      if (!res.ok) throw new Error('Failed to load curator daily');
+      const data = await res.json();
+      curatorDates = data.dates || [];
+      curatorSelectedDate = data.date || '';
+      curatorDaily = data.daily || null;
+      curatorResearchLog = data.research_log || null;
+      curatorStatus = data.status || null;
+
+      renderCuratorDateSelect();
+      renderCuratorStatusBanner(curatorStatus);
+      renderCuratorDaily();
+      renderCuratorResearchLog();
+    } catch (err) {
+      console.warn('Curator daily fetch error:', err);
+    }
+  }
+
+  function renderCuratorDateSelect() {
+    if (!curatorDateSelect) return;
+    if (curatorDates.length === 0) {
+      curatorDateSelect.innerHTML = '<option value="">データなし</option>';
+      return;
+    }
+    curatorDateSelect.innerHTML = curatorDates
+      .map((d) => `<option value="${escapeHtml(d)}" ${d === curatorSelectedDate ? 'selected' : ''}>${escapeHtml(d)}</option>`)
+      .join('');
+  }
+
+  function renderCuratorDaily() {
+    if (!curatorDailyList) return;
+    if (!curatorDaily || !Array.isArray(curatorDaily.parts) || curatorDaily.parts.length === 0) {
+      curatorDailyList.innerHTML = `
+        <div class="queue-empty">
+          <p class="queue-empty-title">キュレーション結果がありません</p>
+          <p>「今すぐ実行」を押すか、毎日 03:00 の自動生成をお待ちください。</p>
+        </div>
+      `;
+      return;
+    }
+
+    curatorDailyList.innerHTML = '';
+
+    if (curatorDaily.shortfall_warning) {
+      const warn = document.createElement('div');
+      warn.className = 'curator-status-banner';
+      warn.style.borderColor = 'rgba(255,51,102,0.45)';
+      warn.innerHTML = `<span style="font-size:0.78rem;color:#fda4af;">⚠️ ${escapeHtml(curatorDaily.shortfall_warning)}</span>`;
+      curatorDailyList.appendChild(warn);
+    }
+
+    curatorDaily.parts.forEach((part) => {
+      const card = document.createElement('article');
+      card.className = 'curator-card';
+
+      const pType = part.part_type || 'core';
+      const badgeLabels = {
+        core: 'Core',
+        discovery: 'Discovery',
+        wildcard: 'Wild Card',
+        connections: 'Connections',
+      };
+      const badgeText = badgeLabels[pType] || pType;
+
+      // Audio status pill
+      const aStatus = part.audio_status || 'pending';
+      let audioBadgeHtml = `<span class="curator-audio-status pending">⏳ 待機中</span>`;
+      if (aStatus === 'ready') {
+        const durText = part.audio_duration_sec ? ` (${formatTime(part.audio_duration_sec)})` : '';
+        audioBadgeHtml = `<span class="curator-audio-status ready">🎧 準備完了${durText}</span>`;
+      } else if (aStatus === 'synthesizing') {
+        audioBadgeHtml = `<span class="curator-audio-status synthesizing">⏳ 合成中...</span>`;
+      } else if (aStatus === 'failed') {
+        audioBadgeHtml = `<span class="curator-audio-status failed">⚠️ 合成失敗</span>`;
+      } else if (aStatus === 'expired') {
+        audioBadgeHtml = `<span class="curator-audio-status expired">期限切れ(再合成可)</span>`;
+      }
+
+      const estHtml = `<span class="badge-duration">約${part.estimated_minutes || '?'}分</span>`;
+
+      // Source metadata
+      const src = part.source || {};
+      const accessLabel =
+        src.access_type === 'free_full_text'
+          ? '無料全文検証済'
+          : src.access_type === 'open_abstract'
+          ? '公開研究概要'
+          : src.access_type === 'synthesis'
+          ? '横断統合'
+          : '検証済';
+
+      const sourceHtml = `
+        <div class="curator-source-meta">
+          <span class="curator-free-badge">✓ ${escapeHtml(accessLabel)}</span>
+          <span>📰 ${escapeHtml(src.source_name || '不明')}</span>
+          ${src.author && src.author !== '記載なし' ? `<span>✍️ ${escapeHtml(src.author)}</span>` : ''}
+          ${src.published_at && src.published_at !== '記載なし' ? `<span>📅 ${escapeHtml(src.published_at)}</span>` : ''}
+          ${src.url ? `<a href="${escapeHtml(src.url)}" target="_blank" rel="noopener" class="curator-source-link">🔗 原文を開く</a>` : ''}
+        </div>
+      `;
+
+      // 7-axis score box (if present)
+      let scoresHtml = '';
+      if (part.scores && Object.keys(part.scores).length > 0) {
+        const axesPills = Object.keys(AXIS_LABELS)
+          .map((k) => {
+            const v = part.scores[k] !== undefined ? Number(part.scores[k]).toFixed(1) : '-';
+            return `<div class="curator-axis-pill"><span>${AXIS_LABELS[k]}</span><strong>${v}</strong></div>`;
+          })
+          .join('');
+        scoresHtml = `
+          <div class="curator-scores-box">
+            <div class="curator-score-headline">
+              <span>7軸加重スコア: ${part.weighted_score !== null ? Number(part.weighted_score).toFixed(2) : '-'} / 5.00</span>
+              <span style="color:var(--text-muted);font-weight:600;">適合 ${part.interest_fit ?? '-'} / 新規 ${part.novelty ?? '-'}</span>
+            </div>
+            <div class="curator-axes-grid">${axesPills}</div>
+          </div>
+        `;
+      }
+
+      // Enqueue button
+      const isEnqueued = !!part.enqueued;
+      const enqueueBtnLabel = isEnqueued
+        ? '✓ キュー追加済（再追加可）'
+        : aStatus === 'ready'
+        ? '＋ キューへ追加（即再生）'
+        : '＋ キューへ追加（音声生成）';
+
+      // Feedback initial state
+      const existingFb = part.feedback || {};
+      const selectedRating = existingFb.rating || 0;
+      const selectedReasons = new Set(existingFb.reasons || []);
+      const existingMemo = existingFb.memo || '';
+
+      const ratingBtnsHtml = CURATOR_RATINGS.map(
+        (r) =>
+          `<button type="button" class="curator-rating-btn ${selectedRating === r.val ? 'selected' : ''}" data-rating="${r.val}">${escapeHtml(r.label)}</button>`
+      ).join('');
+
+      const reasonChipsHtml = CURATOR_REASON_CHIPS.map(
+        (chip) =>
+          `<button type="button" class="curator-reason-chip ${selectedReasons.has(chip) ? 'selected' : ''}" data-reason="${escapeHtml(chip)}">${escapeHtml(chip)}</button>`
+      ).join('');
+
+      card.innerHTML = `
+        <div class="curator-card-head">
+          <span class="curator-part-badge ${escapeHtml(pType)}">${escapeHtml(badgeText)}</span>
+          <div class="curator-audio-badges">
+            ${estHtml}
+            ${audioBadgeHtml}
+          </div>
+        </div>
+        <h3 class="curator-title">${escapeHtml(part.title)}</h3>
+        <div class="curator-why">${escapeHtml(part.why_selected || '')}</div>
+        ${sourceHtml}
+        ${scoresHtml}
+        <div class="curator-action-row">
+          <button type="button" class="btn-curator-enqueue ${isEnqueued ? 'enqueued' : ''}" data-action="enqueue">
+            ${enqueueBtnLabel}
+          </button>
+        </div>
+        <div class="curator-feedback-box">
+          <div class="curator-fb-title">📝 フィードバック（Core 推薦の学習に反映 / Wild Card には非適用）</div>
+          <div class="curator-rating-row">${ratingBtnsHtml}</div>
+          <div class="curator-reason-row">${reasonChipsHtml}</div>
+          <div class="curator-memo-row">
+            <input type="text" class="curator-memo-input" placeholder="任意メモ（例：次回この視点を深掘りしたい）" value="${escapeHtml(existingMemo)}">
+            <button type="button" class="btn-curator-fb-save">保存</button>
+          </div>
+        </div>
+      `;
+
+      // Wire enqueue button
+      const enqueueBtn = card.querySelector('[data-action="enqueue"]');
+      enqueueBtn.addEventListener('click', async () => {
+        enqueueBtn.disabled = true;
+        enqueueBtn.textContent = '⏳ キューに追加中...';
+        try {
+          const res = await fetch('/api/curator/enqueue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: curatorDaily.date, part_id: part.part_id }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'キュー追加に失敗しました');
+          }
+          const data = await res.json();
+          part.enqueued = true;
+          enqueueBtn.classList.add('enqueued');
+          enqueueBtn.textContent = '✓ キュー追加済（再追加可）';
+          showToast(
+            data.instant_ready
+              ? '🎧 事前音声化済みMP3を即座にキューへ追加しました！（待ち時間0秒）'
+              : '⏳ キューに追加しました。バックグラウンドで音声合成します。'
+          );
+          await fetchQueue();
+        } catch (err) {
+          showToast(`エラー: ${err.message}`);
+          enqueueBtn.textContent = enqueueBtnLabel;
+        } finally {
+          enqueueBtn.disabled = false;
+        }
+      });
+
+      // Wire feedback controls
+      let currentRating = selectedRating;
+      const activeReasons = new Set(selectedReasons);
+      const ratingBtns = card.querySelectorAll('.curator-rating-btn');
+      ratingBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          currentRating = Number(btn.dataset.rating);
+          ratingBtns.forEach((b) => b.classList.toggle('selected', Number(b.dataset.rating) === currentRating));
+        });
+      });
+
+      const reasonBtns = card.querySelectorAll('.curator-reason-chip');
+      reasonBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const r = btn.dataset.reason;
+          if (activeReasons.has(r)) {
+            activeReasons.delete(r);
+            btn.classList.remove('selected');
+          } else {
+            activeReasons.add(r);
+            btn.classList.add('selected');
+          }
+        });
+      });
+
+      const memoInput = card.querySelector('.curator-memo-input');
+      const saveFbBtn = card.querySelector('.btn-curator-fb-save');
+      saveFbBtn.addEventListener('click', async () => {
+        if (!currentRating) {
+          showToast('先に5段階評価を選択してください');
+          return;
+        }
+        saveFbBtn.disabled = true;
+        try {
+          const res = await fetch('/api/curator/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: curatorDaily.date,
+              part_id: part.part_id,
+              rating: currentRating,
+              reasons: Array.from(activeReasons),
+              memo: memoInput.value.trim(),
+            }),
+          });
+          if (!res.ok) throw new Error('フィードバック保存に失敗しました');
+          showToast('✓ フィードバックを保存し、Core学習プロファイルを更新しました');
+        } catch (err) {
+          showToast(`エラー: ${err.message}`);
+        } finally {
+          saveFbBtn.disabled = false;
+        }
+      });
+
+      curatorDailyList.appendChild(card);
+    });
+  }
+
+  function renderCuratorResearchLog() {
+    if (!curatorLogSummary || !curatorLogList) return;
+    if (!curatorResearchLog) {
+      curatorLogSummary.innerHTML = '<p style="color:var(--text-muted);">Research Log はまだありません。</p>';
+      curatorLogList.innerHTML = '';
+      return;
+    }
+
+    const stats = curatorResearchLog.stats || {};
+    const newSources = curatorResearchLog.new_sources_discovered || [];
+    const nextQs = curatorResearchLog.next_research_questions || [];
+
+    curatorLogSummary.innerHTML = `
+      <div class="log-stats-row">
+        <span class="log-stat-pill">収集: <strong>${stats.raw_collected ?? 0}</strong></span>
+        <span class="log-stat-pill">検証通過: <strong>${stats.verified_count ?? 0}</strong></span>
+        <span class="log-stat-pill">除外: <strong>${stats.rejected_count ?? 0}</strong></span>
+      </div>
+      ${
+        newSources.length > 0
+          ? `<div>
+               <div class="log-subblock-title">🌐 新規発見ソース</div>
+               <ul class="log-bullet-list">${newSources.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
+             </div>`
+          : ''
+      }
+      ${
+        nextQs.length > 0
+          ? `<div>
+               <div class="log-subblock-title">💡 次回調査したい問い</div>
+               <ul class="log-bullet-list">${nextQs.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ul>
+             </div>`
+          : ''
+      }
+    `;
+
+    const cands = curatorResearchLog.candidates || [];
+    curatorLogList.innerHTML = '';
+    cands.forEach((c) => {
+      const card = document.createElement('div');
+      card.className = 'log-candidate-card';
+      const st = c.status || 'rejected';
+      let badgeCls = 'rejected';
+      let badgeLabel = '除外';
+      if (st.startsWith('selected:')) {
+        badgeCls = 'selected';
+        badgeLabel = `採用: ${st.split(':')[1].toUpperCase()}`;
+      } else if (st === 'not_selected') {
+        badgeCls = 'not_selected';
+        badgeLabel = `候補（スコア ${c.weighted_score ?? '-'}）`;
+      }
+
+      const canPick = !st.startsWith('selected:') && c.url && c.url.startsWith('http');
+      card.innerHTML = `
+        <div class="log-candidate-top">
+          <span class="log-status-badge ${badgeCls}">${escapeHtml(badgeLabel)}</span>
+          <span style="font-size:0.72rem;color:var(--text-muted);">${escapeHtml(c.source_name || '')}</span>
+        </div>
+        <div class="log-cand-title">${escapeHtml(c.title || '無題')}</div>
+        <div class="log-cand-reason">${escapeHtml(c.reason || '')}</div>
+        <div class="log-cand-actions">
+          ${c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener" class="curator-source-link">🔗 元記事</a>` : '<span></span>'}
+          ${canPick ? `<button type="button" class="btn-pick-candidate">＋ 自分で聴く</button>` : ''}
+        </div>
+      `;
+
+      const pickBtn = card.querySelector('.btn-pick-candidate');
+      if (pickBtn) {
+        pickBtn.addEventListener('click', async () => {
+          pickBtn.disabled = true;
+          pickBtn.textContent = '⏳ 投入中...';
+          try {
+            const res = await fetch('/api/curator/pick-candidate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: c.url, title: c.title, date: curatorSelectedDate }),
+            });
+            if (!res.ok) throw new Error('投入に失敗しました');
+            pickBtn.textContent = '✓ キュー投入済';
+            showToast('🎧 再生キューに投入しました（音声化を開始します）');
+            await fetchQueue();
+          } catch (err) {
+            showToast(`エラー: ${err.message}`);
+            pickBtn.disabled = false;
+            pickBtn.textContent = '＋ 自分で聴く';
+          }
+        });
+      }
+
+      curatorLogList.appendChild(card);
+    });
+  }
+
+  // -------------------------------------------------------------
   // Initialization & Polling loop for background queue processing
   // -------------------------------------------------------------
   setupBookmarklet();
@@ -1057,6 +1541,9 @@
     const hasActiveTask = queue.some(it => it.status === 'pending' || it.status === 'processing');
     if (hasActiveTask || document.visibilityState === 'visible') {
       fetchQueue();
+    }
+    if (activeTab === 'curator' || (curatorStatus && curatorStatus.running)) {
+      fetchCuratorStatus();
     }
   }, 4000);
 

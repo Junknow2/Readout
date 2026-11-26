@@ -23,6 +23,7 @@ from pydantic import BaseModel, HttpUrl
 import poc_pipeline
 import queue_manager
 import feed_manager
+import curator_engine
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -135,6 +136,30 @@ class AddQueueRequest(BaseModel):
 
 class AddFeedRequest(BaseModel):
     url: str
+
+
+class CuratorRunRequest(BaseModel):
+    date: Optional[str] = None
+    synthesize_audio: bool = True
+
+
+class CuratorEnqueueRequest(BaseModel):
+    date: str
+    part_id: str
+
+
+class CuratorFeedbackRequest(BaseModel):
+    date: str
+    part_id: str
+    rating: int | str
+    reasons: list[str] = []
+    memo: str = ""
+
+
+class CuratorPickCandidateRequest(BaseModel):
+    url: str
+    title: Optional[str] = None
+    date: Optional[str] = None
 
 
 def is_pdf_url(url: str) -> bool:
@@ -263,6 +288,7 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
 def startup_event():
     queue_manager.ensure_dirs()
     feed_manager.ensure_dirs()
+    curator_engine.ensure_dirs()
 
 
 
@@ -708,6 +734,149 @@ async def get_articles(limit: int = 40):
         return articles
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch articles: {e}")
+
+
+# --- Personal Knowledge Curator Endpoints ---
+
+async def _synthesize_curator_queue_item(item_id: str, script_text: str):
+    """Background TTS fallback when a curator part is enqueued before pre-synthesis finishes."""
+    try:
+        mp3_path = OUTPUT_DIR / f"{item_id}.mp3"
+        await poc_pipeline.generate_speech_async(script_text, mp3_path, voice=poc_pipeline.DEFAULT_VOICE)
+        dur = 0.0
+        try:
+            dur = round(MP3(str(mp3_path)).info.length, 1)
+        except Exception:
+            dur = round(len(script_text) / 5.5, 1)
+        queue_manager.update_item(
+            item_id,
+            audio_duration_sec=dur,
+            status="ready",
+            error_message=None,
+        )
+    except Exception as e:
+        queue_manager.update_item(item_id, status="failed", error_message=str(e))
+
+
+async def _run_curator_bg(date_str: Optional[str], synthesize_audio: bool):
+    try:
+        await curator_engine.run_daily_curation(
+            date_str=date_str,
+            synthesize_audio=synthesize_audio,
+        )
+    except Exception as e:
+        print(f"[-] Background curator run failed: {e}")
+
+
+@app.get("/api/curator/dates")
+async def get_curator_dates():
+    """Return list of dates that have curated daily selections."""
+    return {"dates": curator_engine.list_curated_dates()}
+
+
+@app.get("/api/curator/status")
+async def get_curator_status():
+    """Return current background curation progress status."""
+    return curator_engine.get_status()
+
+
+@app.get("/api/curator/daily")
+async def get_curator_daily(date: Optional[str] = None):
+    """Return Daily Selection + Research Log + runtime status for specified or latest date."""
+    target_date, daily, research_log = curator_engine.load_daily(date)
+    return {
+        "date": target_date,
+        "dates": curator_engine.list_curated_dates(),
+        "daily": daily,
+        "research_log": research_log,
+        "status": curator_engine.get_status(),
+    }
+
+
+@app.post("/api/curator/run")
+async def trigger_curator_run(
+    background_tasks: BackgroundTasks,
+    payload: Optional[CuratorRunRequest] = None,
+):
+    """Trigger manual curation run in background."""
+    status = curator_engine.get_status()
+    if status.get("running"):
+        return {"started": False, "message": "すでにキュレーションを実行中です。", "status": status}
+    target_date = payload.date if payload else None
+    synth = payload.synthesize_audio if payload else True
+    background_tasks.add_task(_run_curator_bg, target_date, synth)
+    return {
+        "started": True,
+        "date": target_date or curator_engine.today_jst_str(),
+        "message": "バックグラウンドでキュレーションを開始しました。",
+    }
+
+
+@app.post("/api/curator/enqueue")
+async def enqueue_curator_part_api(
+    payload: CuratorEnqueueRequest,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Add a curated recommendation part to Readout's playback queue.
+    If pre-synthesized MP3 is ready, copies it immediately (0s wait, status='ready').
+    """
+    try:
+        item, needs_bg_tts, script_text = curator_engine.enqueue_curator_part(
+            payload.date, payload.part_id
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Enqueue failed: {e}")
+
+    if needs_bg_tts and script_text:
+        background_tasks.add_task(_synthesize_curator_queue_item, item["id"], script_text)
+
+    return {
+        "item": item,
+        "instant_ready": not needs_bg_tts,
+    }
+
+
+@app.post("/api/curator/feedback")
+async def submit_curator_feedback(payload: CuratorFeedbackRequest):
+    """Save 5-level feedback + reason chips + memo and update Core preference profile."""
+    try:
+        res = curator_engine.record_feedback(
+            date_str=payload.date,
+            part_id=payload.part_id,
+            rating=payload.rating,
+            reasons=payload.reasons,
+            memo=payload.memo,
+        )
+        return {"success": True, **res}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Feedback save failed: {e}")
+
+
+@app.post("/api/curator/pick-candidate")
+async def pick_curator_candidate(
+    payload: CuratorPickCandidateRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Enqueue any candidate from Research Log (including rejected/not-selected) into standard Readout queue."""
+    url = str(payload.url).strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid URL scheme. Must start with http:// or https://")
+
+    is_pdf = is_pdf_url(url)
+    item = queue_manager.add_item(
+        url=url,
+        title=(payload.title or "").strip() or None,
+        item_type="pdf" if is_pdf else "web",
+    )
+    background_tasks.add_task(process_item_task, item_id=item["id"])
+    return item
 
 
 

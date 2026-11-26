@@ -1,4 +1,4 @@
-const CACHE_NAME = 'readout-v2';
+const CACHE_NAME = 'readout-v3';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -100,8 +100,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. API Queue requests (/api/queue)
-  if (url.pathname.startsWith('/api/queue') && event.request.method === 'GET') {
+  // 2. API requests: Never cache non-GET or Curator/Feeds/Articles APIs
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/queue')) {
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
@@ -116,6 +120,11 @@ self.addEventListener('fetch', (event) => {
           return caches.match(event.request);
         })
     );
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(fetch(event.request));
     return;
   }
 
