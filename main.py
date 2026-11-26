@@ -41,6 +41,64 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 READOUT_USERNAME = os.getenv("READOUT_USERNAME") or os.getenv("DASHBOARD_USERNAME")
 READOUT_PASSWORD = os.getenv("READOUT_PASSWORD") or os.getenv("DASHBOARD_PASSWORD")
 
+# Matrix Note integration configuration (LifeLog local API on port 8000)
+MATRIX_NOTE_API_URL = os.getenv("MATRIX_NOTE_API_URL", "http://127.0.0.1:8000/api/notes").rstrip("/")
+
+
+def _load_env_file_vars(env_path: Path) -> dict[str, str]:
+    """Minimal .env key=value parser for fallback credential lookup."""
+    result: dict[str, str] = {}
+    if not env_path.exists():
+        return result
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            result[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return result
+
+
+def _get_matrix_note_credentials() -> tuple[str, Optional[tuple[str, str]]]:
+    """Return (api_url, (username, password) or None) for LifeLog Matrix Note API."""
+    api_url = (os.getenv("MATRIX_NOTE_API_URL") or MATRIX_NOTE_API_URL).rstrip("/")
+    user = os.getenv("MATRIX_USERNAME") or READOUT_USERNAME
+    pw = os.getenv("MATRIX_PASSWORD") or READOUT_PASSWORD
+    if not (user and pw):
+        lifelog_env = _load_env_file_vars(BASE_DIR.parent / "LifeLog" / ".env")
+        user = user or lifelog_env.get("DASHBOARD_USERNAME")
+        pw = pw or lifelog_env.get("DASHBOARD_PASSWORD")
+    auth = (user, pw) if (user and pw) else None
+    return api_url, auth
+
+
+def _post_to_matrix_note(
+    title: str,
+    content: str,
+    tags: list[str],
+    source: dict,
+) -> dict:
+    """POST a note to LifeLog's Matrix Note API (NoteCreateRequest schema)."""
+    api_url, auth = _get_matrix_note_credentials()
+    payload = {
+        "title": title,
+        "content": content,
+        "tags": tags,
+        "source": source,
+    }
+    resp = requests.post(
+        api_url,
+        json=payload,
+        auth=auth,
+        timeout=15,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Matrix Note API returned HTTP {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
 app = FastAPI(title="Readout", description="Marathon / Running Audio Queue & PWA")
 
 # CORS for local dev / PWA
@@ -160,6 +218,16 @@ class CuratorPickCandidateRequest(BaseModel):
     url: str
     title: Optional[str] = None
     date: Optional[str] = None
+
+
+class SendToMatrixNoteRequest(BaseModel):
+    force: bool = False
+
+
+class CuratorSendToMatrixNoteRequest(BaseModel):
+    date: str
+    part_id: str
+    force: bool = False
 
 
 def is_pdf_url(url: str) -> bool:
@@ -290,6 +358,10 @@ def startup_event():
     queue_manager.ensure_dirs()
     feed_manager.ensure_dirs()
     curator_engine.ensure_dirs()
+    try:
+        queue_manager.cleanup_listened_audio(retention_days=7)
+    except Exception as e:
+        print(f"[Startup] Listened audio cleanup warning: {e}")
 
 
 
@@ -322,8 +394,20 @@ async def service_worker():
 
 
 @app.get("/api/queue")
-async def get_queue():
-    """List all active queue items (not listened)."""
+async def get_queue(filter: str = "unread"):
+    """
+    List queue items.
+    - filter='unread' (default): active unread items (backward compatible)
+    - filter='listened': listened items (newest listened_at first)
+    - filter='all': all items
+    """
+    mode = (filter or "unread").strip().lower()
+    if mode == "listened":
+        return queue_manager.get_listened_queue()
+    if mode == "all":
+        return queue_manager.get_all_queue()
+    if mode != "unread":
+        raise HTTPException(status_code=400, detail="filter must be one of: unread, listened, all")
     return queue_manager.get_active_queue()
 
 
@@ -679,11 +763,101 @@ async def add_via_bookmarklet(
 
 @app.post("/api/queue/{item_id}/listened")
 async def mark_item_listened(item_id: str):
-    """Mark an item as listened (removes from active queue)."""
+    """Mark an item as listened (moves from unread queue to listened list)."""
     success = queue_manager.mark_listened(item_id)
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"success": True, "id": item_id}
+
+
+@app.post("/api/queue/{item_id}/unread")
+async def mark_item_unread(item_id: str):
+    """Revert a listened item back to unread ('ready') if its MP3 audio file still exists."""
+    try:
+        updated = queue_manager.mark_unread(item_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"success": True, "id": item_id, "item": updated}
+
+
+@app.post("/api/queue/cleanup-listened")
+async def cleanup_listened_audio_api(retention_days: int = 7):
+    """Manually trigger cleanup of listened MP3 audio files older than retention_days."""
+    if retention_days < 0:
+        raise HTTPException(status_code=400, detail="retention_days must be >= 0")
+    result = queue_manager.cleanup_listened_audio(retention_days=retention_days)
+    return {"success": True, **result}
+
+
+@app.post("/api/queue/{item_id}/send-to-matrix-note")
+async def send_queue_item_to_matrix_note(
+    item_id: str,
+    payload: Optional[SendToMatrixNoteRequest] = None,
+):
+    """Send a Readout queue item (unread or listened) to LifeLog's Matrix Note."""
+    item = queue_manager.get_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    force = bool(payload.force) if payload else False
+    if item.get("sent_to_matrix_note") and item.get("matrix_note_id") and not force:
+        return {
+            "success": True,
+            "already_sent": True,
+            "note_id": item.get("matrix_note_id"),
+            "item": queue_manager._enrich_item(item),
+        }
+
+    title = (item.get("title") or "Readout メモ").strip()
+    summary = (item.get("summary") or "").strip()
+    url = (item.get("url") or "").strip()
+    source_name = (item.get("source_name") or "").strip()
+    is_http_url = url.startswith(("http://", "https://"))
+
+    content_parts = []
+    if summary:
+        content_parts.append(summary)
+    source_lines = []
+    if source_name:
+        source_lines.append(f"- 媒体: {source_name}")
+    if is_http_url:
+        source_lines.append(f"- 出典: {url}")
+    elif item.get("original_filename"):
+        source_lines.append(f"- ファイル: {item.get('original_filename')}")
+    if source_lines:
+        content_parts.append("### 出典情報\n" + "\n".join(source_lines))
+    content = "\n\n".join(content_parts) or title
+
+    tags = ["Readout", "Curator"] if item.get("item_type") == "curator" else ["Readout"]
+    source_title = f"{source_name} - {title}".strip(" -") if source_name else title
+    source_obj = {
+        "type": "web",
+        "title": source_title,
+        "url": url if is_http_url else "",
+    }
+
+    try:
+        res = await asyncio.to_thread(_post_to_matrix_note, title, content, tags, source_obj)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Matrix Note 送信に失敗しました: {e}")
+
+    note_data = res.get("note") if isinstance(res, dict) else None
+    note_id = (note_data or {}).get("id") or ""
+    updated = queue_manager.update_item(
+        item_id,
+        sent_to_matrix_note=True,
+        matrix_note_id=note_id,
+        matrix_sent_at=datetime.now(timezone.utc).isoformat(),
+    )
+    return {
+        "success": True,
+        "already_sent": False,
+        "note_id": note_id,
+        "note": note_data,
+        "item": queue_manager._enrich_item(updated or item),
+    }
 
 
 @app.delete("/api/queue/{item_id}")
@@ -879,6 +1053,84 @@ async def pick_curator_candidate(
     )
     background_tasks.add_task(process_item_task, item_id=item["id"])
     return item
+
+
+@app.post("/api/curator/send-to-matrix-note")
+async def send_curator_part_to_matrix_note(payload: CuratorSendToMatrixNoteRequest):
+    """Send a Curator daily part directly to LifeLog's Matrix Note."""
+    target_date, daily, _ = curator_engine.load_daily(payload.date)
+    if not daily or not isinstance(daily.get("parts"), list):
+        raise HTTPException(status_code=404, detail=f"Curator daily data not found for {payload.date}")
+
+    target_part = None
+    for p in daily["parts"]:
+        if p.get("part_id") == payload.part_id:
+            target_part = p
+            break
+    if not target_part:
+        raise HTTPException(status_code=404, detail=f"Part '{payload.part_id}' not found")
+
+    if target_part.get("sent_to_matrix_note") and target_part.get("matrix_note_id") and not payload.force:
+        return {
+            "success": True,
+            "already_sent": True,
+            "note_id": target_part.get("matrix_note_id"),
+            "part_id": payload.part_id,
+            "date": target_date,
+        }
+
+    src = target_part.get("source") or {}
+    title = (target_part.get("title") or "Curator メモ").strip()
+    why_selected = (target_part.get("why_selected") or "").strip()
+    src_name = (src.get("source_name") or "").strip()
+    src_author = (src.get("author") or "").strip()
+    src_pub = (src.get("published_at") or "").strip()
+    src_url = (src.get("url") or "").strip()
+    orig_title = (src.get("original_title") or "").strip()
+
+    content_parts = []
+    if why_selected:
+        content_parts.append(why_selected)
+    source_lines = []
+    if orig_title and orig_title != title:
+        source_lines.append(f"- 原題: {orig_title}")
+    if src_name:
+        source_lines.append(f"- 媒体: {src_name}")
+    if src_author and src_author != "記載なし":
+        source_lines.append(f"- 著者: {src_author}")
+    if src_pub and src_pub != "記載なし":
+        source_lines.append(f"- 公開日: {src_pub}")
+    if src_url:
+        source_lines.append(f"- 出典: {src_url}")
+    if source_lines:
+        content_parts.append("### 出典情報\n" + "\n".join(source_lines))
+    content = "\n\n".join(content_parts) or title
+
+    source_title = f"{src_name} - {orig_title or title}".strip(" -") if src_name else (orig_title or title)
+    source_obj = {
+        "type": "web",
+        "title": source_title,
+        "url": src_url if src_url.startswith(("http://", "https://")) else "",
+    }
+    tags = ["Readout", "Curator"]
+
+    try:
+        res = await asyncio.to_thread(_post_to_matrix_note, title, content, tags, source_obj)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Matrix Note 送信に失敗しました: {e}")
+
+    note_data = res.get("note") if isinstance(res, dict) else None
+    note_id = (note_data or {}).get("id") or ""
+    curator_engine.mark_part_sent_to_matrix(target_date or payload.date, payload.part_id, note_id)
+
+    return {
+        "success": True,
+        "already_sent": False,
+        "note_id": note_id,
+        "note": note_data,
+        "part_id": payload.part_id,
+        "date": target_date or payload.date,
+    }
 
 
 

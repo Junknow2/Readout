@@ -3,7 +3,7 @@ import os
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -46,13 +46,49 @@ def save_queue(items: List[Dict[str, Any]]):
         shutil.move(str(temp_file), str(QUEUE_FILE))
 
 
+def _enrich_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach computed audio existence & Matrix Note defaults without mutating stored JSON."""
+    enriched = dict(item)
+    audio_filename = enriched.get("audio_filename") or (
+        f"{enriched['id']}.mp3" if enriched.get("id") else ""
+    )
+    mp3_exists = bool(audio_filename and (OUTPUT_DIR / audio_filename).exists())
+    audio_deleted = bool(enriched.get("audio_deleted", False)) or (
+        enriched.get("status") == "listened" and not mp3_exists
+    )
+    enriched["has_audio"] = mp3_exists
+    enriched["audio_deleted"] = audio_deleted
+    enriched.setdefault("sent_to_matrix_note", False)
+    enriched.setdefault("matrix_note_id", None)
+    return enriched
+
+
 def get_active_queue() -> List[Dict[str, Any]]:
     """Return items that are not listened, newest first."""
     items = load_queue()
-    active = [item for item in items if item.get("status") != "listened"]
+    active = [_enrich_item(item) for item in items if item.get("status") != "listened"]
     # Sort descending by created_at
     active.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return active
+
+
+def get_listened_queue() -> List[Dict[str, Any]]:
+    """Return items marked as listened, newest listened_at/created_at first."""
+    items = load_queue()
+    listened = [_enrich_item(item) for item in items if item.get("status") == "listened"]
+    listened.sort(
+        key=lambda x: x.get("listened_at") or x.get("created_at") or "",
+        reverse=True,
+    )
+    return listened
+
+
+def get_all_queue() -> List[Dict[str, Any]]:
+    """Return all queue items (unread + listened), newest created_at first."""
+    items = load_queue()
+    enriched = [_enrich_item(item) for item in items]
+    enriched.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return enriched
 
 
 def get_item(item_id: str) -> Optional[Dict[str, Any]]:
@@ -110,9 +146,103 @@ def update_item(item_id: str, **kwargs) -> Optional[Dict[str, Any]]:
 
 
 def mark_listened(item_id: str) -> bool:
-    """Set status to 'listened'."""
-    res = update_item(item_id, status="listened")
+    """Set status to 'listened' and record UTC ISO8601 listened_at timestamp."""
+    now = datetime.now(timezone.utc).isoformat()
+    res = update_item(item_id, status="listened", listened_at=now)
     return res is not None
+
+
+def mark_unread(item_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Revert a listened item back to 'ready' if its MP3 audio file still exists.
+    Raises FileNotFoundError if the audio file was already deleted.
+    Returns None if item does not exist.
+    """
+    item = get_item(item_id)
+    if not item:
+        return None
+    audio_filename = item.get("audio_filename") or f"{item_id}.mp3"
+    mp3_path = OUTPUT_DIR / audio_filename
+    if not mp3_path.exists():
+        raise FileNotFoundError("音声ファイルが削除済みのため未読へ戻せません。")
+    updated = update_item(
+        item_id,
+        status="ready",
+        listened_at=None,
+        audio_deleted=False,
+    )
+    return _enrich_item(updated) if updated else None
+
+
+def _parse_iso_utc(ts: Optional[str]) -> Optional[datetime]:
+    """Parse ISO8601 timestamp string to timezone-aware UTC datetime."""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def cleanup_listened_audio(retention_days: int = 7) -> Dict[str, Any]:
+    """
+    Delete MP3 audio files for items with status=='listened' older than `retention_days`.
+    Preserves queue.json metadata (title, summary, url, matrix_note status) and .txt scripts.
+    Never touches unread/pending/processing/ready/failed items.
+    """
+    ensure_dirs()
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(days=retention_days)
+    items = load_queue()
+
+    deleted_files: List[str] = []
+    freed_bytes = 0
+    changed = False
+
+    for item in items:
+        if item.get("status") != "listened":
+            continue
+        ref_dt = _parse_iso_utc(item.get("listened_at") or item.get("created_at"))
+        if ref_dt is None or ref_dt > cutoff:
+            continue
+
+        audio_filename = item.get("audio_filename") or f"{item.get('id', '')}.mp3"
+        mp3_path = OUTPUT_DIR / audio_filename
+        if mp3_path.exists() and mp3_path.is_file():
+            try:
+                size = mp3_path.stat().st_size
+                mp3_path.unlink()
+                deleted_files.append(audio_filename)
+                freed_bytes += size
+                item["audio_deleted"] = True
+                item["audio_deleted_at"] = now_utc.isoformat()
+                changed = True
+            except Exception as e:
+                print(f"[Queue/Cleanup] Failed to delete {mp3_path}: {e}")
+        elif not item.get("audio_deleted"):
+            # Already missing on disk; mark flag for consistency
+            item["audio_deleted"] = True
+            item.setdefault("audio_deleted_at", now_utc.isoformat())
+            changed = True
+
+    if changed:
+        save_queue(items)
+
+    if deleted_files:
+        print(
+            f"[Queue/Cleanup] Deleted {len(deleted_files)} listened MP3(s) "
+            f"older than {retention_days}d ({freed_bytes} bytes freed): {deleted_files}"
+        )
+
+    return {
+        "retention_days": retention_days,
+        "deleted_count": len(deleted_files),
+        "deleted_files": deleted_files,
+        "freed_bytes": freed_bytes,
+    }
 
 
 def delete_item(item_id: str) -> bool:

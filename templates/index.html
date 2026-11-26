@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="/static/css/style.css?v=5">
+  <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 <body>
   <div class="app-container">
@@ -145,9 +145,15 @@
 
       <!-- Running Queue Stack -->
       <section class="queue-section">
-        <div class="section-header">
-          <h2 class="section-title">再生キュー</h2>
-          <span id="queue-counter" class="queue-count">0 件</span>
+        <div class="section-header queue-section-header">
+          <div class="title-with-badge">
+            <h2 class="section-title">再生キュー</h2>
+            <span id="queue-counter" class="queue-count">0 件</span>
+          </div>
+          <div class="queue-filter-segment" role="tablist" aria-label="再生キュー表示切替">
+            <button type="button" id="queue-filter-unread" class="queue-filter-btn active" role="tab" aria-selected="true" data-filter="unread">未読</button>
+            <button type="button" id="queue-filter-listened" class="queue-filter-btn" role="tab" aria-selected="false" data-filter="listened">既読</button>
+          </div>
         </div>
 
         <div id="queue-list" class="queue-list">
@@ -312,6 +318,6 @@
   <div id="toast" class="toast">メッセージ</div>
 
   <!-- Scripts -->
-  <script src="/static/js/app.js?v=5"></script>
+  <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

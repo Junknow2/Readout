@@ -62,8 +62,13 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - **多ソース巡回 ＆ 厳格なハルシネーション/ペイウォール排除**: Knowledge at Wharton、MIT Sloan Management Review、RIETI、Behavioral Scientist、The Conversation、Greenbook、Quirk's、ESOMAR、Our World in Data、Works in Progress、NBER、J-STAGE API、OpenAlex API、さらに Gemini Google Search Grounding を組み合わせ、全候補を Python 側で実アクセス・本文検証（404・ログイン壁・ペイウォール・本文不足を機械的に除外し Research Log へ記録）。
    - **3 独立探索 ＆ 7 軸加重評価 ＆ 枠別選考**: Core / Discovery / Wild Card の 3 トラックで独立評価（**Wild Card には過去の好みプロファイルを一切渡さず過剰適合を構造的に防止**）。共通テーマに無理やり寄せず、各枠単体で充実した全文論考記事（`free_full_text`）を優先し、7 軸加重スコア（問いの深さ 20%、説明力 20%、根拠の質 20%、独自性 15%、長期的価値 10%、好奇心 10%、音声適性 5%）と関心適合度・新規性から枠別選考。
    - **独立 3 パート編成 ＆ 7 ステップ音声原稿**: Part 1（Core Deep Dive）、Part 2（Discovery Deep Dive）、Part 3（Wild Card）の独立 3 パートを 7 ステップ構成・英単語カタカナ化済みの自然な日本語ナレーション原稿として生成（過去ログの旧 `part4_connections` も後方互換表示に対応）。
-   - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開（使用エンジン `tts_engine` も記録）。14 日より前の未採用 MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
+   - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開（使用エンジン `tts_engine` も記録）。14 日より前の未採用 MP3 および 7 日以上前の既読キュー MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
    - **待ち時間 0 秒の即キュー投入 ＆ 5 段階フィードバック**: `✨ Curator` タブからワンタップで事前音声化済み MP3 を即座にメイン再生キューへ追加（`status="ready"`、`tts_engine` 引き継ぎ）。5 段階評価＋理由チップ＋任意メモで Core 関心プロファイルを継続学習。Research Log の不採用記事も「＋ 自分で聴く」で通常キューへ投入可能。
+
+7. **未読 / 既読切替 ＆ Matrix Note 連携 ＆ 既読音声7日自動削除 (`queue_manager.py`, `main.py`)**:
+   - **未読 / 既読セグメント切替**: `🎧 再生キュー` のヘッダーから「未読（デフォルト）」と「既読」をワンタップ切替（`GET /api/queue?filter=unread|listened|all`）。既読一覧でもタイトル・紹介文・出典リンクの閲覧、残存音声の再生、「未読に戻す（`POST /api/queue/{id}/unread`）」、Matrix Note 送信が可能。
+   - **Matrix Note メモ送信（Readout ⇄ LifeLog 連携）**: 再生キュー（未読・既読両方）および Curator カードの **`📝 Matrix Note`** ボタンから、ローカルの LifeLog / Matrix Note API（`http://127.0.0.1:8000/api/notes`）へタイトル・紹介文・出典情報・タグ（`["Readout"]` / `["Readout", "Curator"]`）をワンタップ送信。二重送信防止と送信済みバッジ（`✅ Matrix済`）表示に対応。
+   - **既読 MP3 の7日自動削除（ディスク容量保護）**: `status == "listened"` かつ既読化（`listened_at`）から 7 日以上経過したアイテムの MP3 のみをサーバー起動時および毎日 03:00 の Curator 実行時に自動削除（`POST /api/queue/cleanup-listened` からの手動実行も可能）。キュー JSON メタデータと `.txt` 原稿は永久保持され、UI 上には「音声削除済み（テキスト保持）」バッジを表示。
 
 ---
 
@@ -139,11 +144,15 @@ cd C:\Users\Jun\Documents\Dev\Readout
 | `GET` | `/` | PWA UI 画面 (HTML) |
 | `GET` | `/manifest.json` | Web App Manifest |
 | `GET` | `/sw.js` | Service Worker (Rootスコープ配信) |
-| `GET` | `/api/queue` | 未読キューアイテム一覧取得 |
+| `GET` | `/api/queue` | キューアイテム一覧取得（`?filter=unread\|listened\|all`、デフォルト `unread`） |
 | `POST` | `/api/queue` | 新規URL追加（Web記事 / PDF直リンク対応、バックグラウンド生成開始） |
 | `POST` | `/api/upload-pdf` | **PDFファイルアップロード（Gemini 3.8 Flash ＋ VOICEPEAK 音声化）** |
 | `GET` | `/pdf/{id}.pdf` | アップロード済み原本PDFダウンロード・プレビュー |
-| `POST` | `/api/queue/{id}/listened` | 既読フラグ更新（キューから除外） |
+| `POST` | `/api/queue/{id}/listened` | 既読フラグ更新（`listened_at` 記録、既読一覧へ移動） |
+| `POST` | `/api/queue/{id}/unread` | 既読アイテムを未読（`ready`）へ復帰（MP3残存時のみ） |
+| `POST` | `/api/queue/cleanup-listened` | 既読から `retention_days`（デフォルト7日）以上経過した MP3 のみ削除 |
+| `POST` | `/api/queue/{id}/send-to-matrix-note` | 再生キューアイテムを Matrix Note (`:8000/api/notes`) へメモ送信 |
+| `POST` | `/api/curator/send-to-matrix-note` | Curator 推薦パートを Matrix Note (`:8000/api/notes`) へメモ送信 |
 | `DELETE` | `/api/queue/{id}` | キュー削除およびMP3/原本PDFファイル削除 |
 | `GET` | `/api/feeds` | 購読中RSSフィード一覧取得 |
 | `POST` | `/api/feeds` | 新規RSSフィード購読登録 |

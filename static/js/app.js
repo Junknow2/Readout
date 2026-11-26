@@ -6,7 +6,9 @@
   // State
   // -------------------------------------------------------------
   let queue = [];
+  let queueFilter = 'unread'; // 'unread' | 'listened'
   let currentIndex = -1;
+  let currentTrackId = null;
   let isPlaying = false;
   let cachedAudioUrls = new Set();
   const speeds = [1.0, 1.25, 1.5, 2.0];
@@ -71,6 +73,8 @@
   const btnAddUrl = document.getElementById('btn-add-url');
   const queueList = document.getElementById('queue-list');
   const queueCounter = document.getElementById('queue-counter');
+  const queueFilterUnread = document.getElementById('queue-filter-unread');
+  const queueFilterListened = document.getElementById('queue-filter-listened');
   const pdfDropzone = document.getElementById('pdf-dropzone');
   const pdfFileInput = document.getElementById('pdf-file-input');
   const btnPdfBrowse = document.getElementById('btn-pdf-browse');
@@ -221,9 +225,9 @@
   async function checkOfflineCache() {
     if (!('caches' in window)) return;
     try {
-      const cache = await caches.open('readout-v4');
+      const cache = await caches.open('readout-v6');
       for (const item of queue) {
-        if (item.status === 'ready' && item.audio_filename) {
+        if (item.has_audio !== false && !item.audio_deleted && item.status === 'ready' && item.audio_filename) {
           const audioUrl = `/audio/${item.audio_filename}`;
           const match = await cache.match(audioUrl);
           if (match) {
@@ -244,19 +248,50 @@
   // -------------------------------------------------------------
   // API Calls: Queue
   // -------------------------------------------------------------
+  function switchQueueFilter(filter) {
+    if (filter !== 'unread' && filter !== 'listened') return;
+    if (queueFilter === filter) return;
+    queueFilter = filter;
+    if (queueFilterUnread) {
+      queueFilterUnread.classList.toggle('active', filter === 'unread');
+      queueFilterUnread.setAttribute('aria-selected', filter === 'unread' ? 'true' : 'false');
+    }
+    if (queueFilterListened) {
+      queueFilterListened.classList.toggle('active', filter === 'listened');
+      queueFilterListened.setAttribute('aria-selected', filter === 'listened' ? 'true' : 'false');
+    }
+    fetchQueue();
+  }
+
+  if (queueFilterUnread) {
+    queueFilterUnread.addEventListener('click', () => switchQueueFilter('unread'));
+  }
+  if (queueFilterListened) {
+    queueFilterListened.addEventListener('click', () => switchQueueFilter('listened'));
+  }
+
   async function fetchQueue() {
     try {
-      const res = await fetch('/api/queue');
+      const endpoint = queueFilter === 'listened' ? '/api/queue?filter=listened' : '/api/queue';
+      const res = await fetch(endpoint);
       if (!res.ok) throw new Error('Failed to fetch queue');
       const data = await res.json();
       
       queue = data;
-      renderQueue();
-      checkOfflineCache();
-      syncArticlesQueueState();
+      if (currentTrackId) {
+        currentIndex = queue.findIndex(it => it.id === currentTrackId);
+      } else {
+        currentIndex = -1;
+      }
 
-      // If nothing is playing and we have items, set up the first ready item
-      if (currentIndex === -1 && queue.length > 0) {
+      renderQueue();
+      if (queueFilter === 'unread') {
+        checkOfflineCache();
+        syncArticlesQueueState();
+      }
+
+      // If nothing is loaded yet and we are on unread queue, set up the first ready item
+      if (!currentTrackId && queueFilter === 'unread' && queue.length > 0) {
         const firstReady = queue.findIndex(it => it.status === 'ready');
         if (firstReady !== -1) {
           loadTrack(firstReady, false);
@@ -321,8 +356,8 @@
   async function markListened(itemId) {
     try {
       await fetch(`/api/queue/${itemId}/listened`, { method: 'POST' });
-      showToast('既読としてキューから除外しました');
-      if (currentIndex !== -1 && queue[currentIndex]?.id === itemId) {
+      showToast('既読にしました（「既読」タブから振り返り可能）');
+      if (currentTrackId === itemId) {
         audio.pause();
         isPlaying = false;
         updatePlayPauseUI();
@@ -339,12 +374,57 @@
     }
   }
 
+  async function markUnread(itemId) {
+    try {
+      const res = await fetch(`/api/queue/${itemId}/unread`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || '未読へ戻せませんでした');
+      }
+      showToast('未読キューへ戻しました');
+      await fetchQueue();
+    } catch (err) {
+      showToast(`エラー: ${err.message}`);
+    }
+  }
+
+  async function sendQueueItemToMatrixNote(item, btn) {
+    if (item.sent_to_matrix_note) {
+      showToast('すでに Matrix Note へ送信済みです');
+      return;
+    }
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = '⏳ 送信中...';
+    try {
+      const res = await fetch(`/api/queue/${item.id}/send-to-matrix-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Matrix Note 送信に失敗しました');
+      }
+      const data = await res.json();
+      item.sent_to_matrix_note = true;
+      item.matrix_note_id = data.note_id || item.matrix_note_id;
+      btn.classList.add('sent');
+      btn.innerHTML = '✅ Matrix済';
+      showToast(data.already_sent ? 'すでに Matrix Note へ送信済みです' : '📝 Matrix Note へメモを送信しました！');
+    } catch (err) {
+      showToast(`エラー: ${err.message}`);
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+
   async function deleteItem(itemId) {
     if (!confirm('このアイテムを削除しますか？')) return;
     try {
       await fetch(`/api/queue/${itemId}`, { method: 'DELETE' });
       showToast('アイテムを削除しました');
-      if (currentIndex !== -1 && queue[currentIndex]?.id === itemId) {
+      if (currentTrackId === itemId) {
         audio.pause();
         isPlaying = false;
         updatePlayPauseUI();
@@ -359,15 +439,26 @@
   // -------------------------------------------------------------
   // Audio Player Management
   // -------------------------------------------------------------
+  function isItemPlayable(item) {
+    if (!item) return false;
+    if (item.audio_deleted || item.has_audio === false) return false;
+    return item.status === 'ready' || item.status === 'listened';
+  }
+
   function loadTrack(index, autoPlay = true) {
     if (index < 0 || index >= queue.length) return;
     const item = queue[index];
-    if (item.status !== 'ready') {
-      showToast('このアイテムはまだ生成中です');
+    if (!isItemPlayable(item)) {
+      if (item.audio_deleted || item.has_audio === false) {
+        showToast('音声ファイルは削除済みです（テキスト保持）');
+      } else {
+        showToast('このアイテムはまだ生成中です');
+      }
       return;
     }
 
     currentIndex = index;
+    currentTrackId = item.id;
     const audioUrl = `/audio/${item.audio_filename}`;
     audio.src = audioUrl;
     audio.playbackRate = speeds[currentSpeedIdx];
@@ -397,6 +488,7 @@
 
   function resetPlayer() {
     currentIndex = -1;
+    currentTrackId = null;
     audio.src = '';
     playerTitle.textContent = '再生待ちのアイテムがありません';
     playerSummary.textContent = 'URLを追加すると、Geminiがポッドキャスト風にリライトして高音質音声化します。';
@@ -551,26 +643,39 @@
     queueCounter.textContent = `${queue.length} 件`;
 
     if (queue.length === 0) {
-      queueList.innerHTML = `
-        <div class="queue-empty">
-          <p class="queue-empty-title">キューは空です</p>
-          <p>上の入力欄に読みたい記事のURLを入れるか、RSSリーダーから追加してください。</p>
-        </div>
-      `;
+      if (queueFilter === 'listened') {
+        queueList.innerHTML = `
+          <div class="queue-empty">
+            <p class="queue-empty-title">既読アイテムはまだありません</p>
+            <p>聴き終えた記事を「既読」にするとここに一覧表示されます（Matrix Note への送信や振り返りが可能です）。</p>
+          </div>
+        `;
+      } else {
+        queueList.innerHTML = `
+          <div class="queue-empty">
+            <p class="queue-empty-title">未読キューは空です</p>
+            <p>上の入力欄に読みたい記事のURLを入れるか、Curator / RSS から追加してください。</p>
+          </div>
+        `;
+      }
       return;
     }
 
     queueList.innerHTML = '';
     queue.forEach((item, index) => {
       const card = document.createElement('div');
-      const isCurrent = index === currentIndex;
+      const isCurrent = item.id === currentTrackId;
       const isProcessing = item.status === 'processing' || item.status === 'pending';
-      const isReady = item.status === 'ready';
-      const isCached = item.audio_filename && cachedAudioUrls.has(`/audio/${item.audio_filename}`);
+      const isListened = item.status === 'listened';
+      const isAudioDeleted = !!(item.audio_deleted || item.has_audio === false);
+      const canPlay = isItemPlayable(item);
+      const isCached = !isAudioDeleted && item.audio_filename && cachedAudioUrls.has(`/audio/${item.audio_filename}`);
 
       let cardClass = 'queue-card';
       if (isCurrent) cardClass += ' active-item';
       if (isProcessing) cardClass += ' processing-item';
+      if (isListened) cardClass += ' listened-item';
+      if (isAudioDeleted) cardClass += ' audio-deleted-item';
       card.className = cardClass;
 
       // Status Badge
@@ -581,6 +686,8 @@
         statusBadgeHtml = `<span class="badge-status processing">生成中...</span>`;
       } else if (item.status === 'failed') {
         statusBadgeHtml = `<span class="badge-status failed">生成失敗</span>`;
+      } else if (isListened && isAudioDeleted) {
+        statusBadgeHtml = `<span class="badge-audio-deleted">音声削除済み（テキスト保持）</span>`;
       }
 
       // Multi-page Badge
@@ -607,8 +714,44 @@
 
       // Duration Badge
       let durationHtml = '';
-      if (item.audio_duration_sec > 0) {
+      if (!isAudioDeleted && item.audio_duration_sec > 0) {
         durationHtml = `<span class="badge-duration">${formatTime(item.audio_duration_sec)}</span>`;
+      }
+
+      // Summary & Source Link
+      const summaryHtml = item.summary
+        ? `<p class="card-summary">${escapeHtml(item.summary)}</p>`
+        : '';
+      const hasHttpUrl = item.url && (item.url.startsWith('http://') || item.url.startsWith('https://'));
+      const sourceRowHtml = hasHttpUrl
+        ? `<div class="card-source-row">
+             <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener" class="card-source-link" title="${escapeHtml(item.url)}">🔗 ${escapeHtml(item.source_name || item.url)}</a>
+           </div>`
+        : '';
+
+      // Matrix Note Button
+      const isSentMatrix = !!item.sent_to_matrix_note;
+      const matrixBtnHtml = isSentMatrix
+        ? `<button class="btn-card-action btn-matrix-note sent" data-action="matrix" title="Matrix Note へ送信済み">✅ Matrix済</button>`
+        : `<button class="btn-card-action btn-matrix-note" data-action="matrix" title="Matrix Note へメモ送信">📝 Matrix Note</button>`;
+
+      // Status toggle button (Listened / Unread)
+      let statusToggleBtnHtml = '';
+      if (isListened) {
+        if (!isAudioDeleted) {
+          statusToggleBtnHtml = `
+            <button class="btn-card-action btn-unread" data-action="unread" title="未読キューへ戻す">
+              ↩ 未読に戻す
+            </button>
+          `;
+        }
+      } else {
+        statusToggleBtnHtml = `
+          <button class="btn-card-action btn-listened" data-action="listened" title="聴き終わった（既読一覧へ移動）">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            既読
+          </button>
+        `;
       }
 
       card.innerHTML = `
@@ -623,11 +766,11 @@
             ${durationHtml}
           </div>
         </div>
+        ${summaryHtml}
+        ${sourceRowHtml}
         <div class="card-actions">
-          <button class="btn-card-action btn-listened" data-action="listened" title="聴き終わった（キューから除外）">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-            既読
-          </button>
+          ${matrixBtnHtml}
+          ${statusToggleBtnHtml}
           <button class="btn-card-action btn-delete" data-action="delete" title="削除">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             削除
@@ -635,11 +778,13 @@
         </div>
       `;
 
-      // Click card to play (if ready)
+      // Click card to play (if playable)
       card.addEventListener('click', (e) => {
-        if (e.target.closest('.card-actions')) return;
-        if (isReady) {
+        if (e.target.closest('.card-actions') || e.target.closest('a')) return;
+        if (canPlay) {
           loadTrack(index, true);
+        } else if (isAudioDeleted) {
+          showToast('音声ファイルは削除済みです（テキスト・出典情報は保持されています）');
         } else if (isProcessing) {
           showToast('現在GeminiとTTSで音声を生成中です。少々お待ちください。');
         } else if (item.status === 'failed') {
@@ -648,11 +793,29 @@
       });
 
       // Actions
+      const btnMatrix = card.querySelector('[data-action="matrix"]');
+      if (btnMatrix) {
+        btnMatrix.addEventListener('click', (e) => {
+          e.stopPropagation();
+          sendQueueItemToMatrixNote(item, btnMatrix);
+        });
+      }
+
       const btnListened = card.querySelector('[data-action="listened"]');
-      btnListened.addEventListener('click', (e) => {
-        e.stopPropagation();
-        markListened(item.id);
-      });
+      if (btnListened) {
+        btnListened.addEventListener('click', (e) => {
+          e.stopPropagation();
+          markListened(item.id);
+        });
+      }
+
+      const btnUnread = card.querySelector('[data-action="unread"]');
+      if (btnUnread) {
+        btnUnread.addEventListener('click', (e) => {
+          e.stopPropagation();
+          markUnread(item.id);
+        });
+      }
 
       const btnDelete = card.querySelector('[data-action="delete"]');
       btnDelete.addEventListener('click', (e) => {
@@ -1351,6 +1514,9 @@
           <button type="button" class="btn-curator-enqueue ${isEnqueued ? 'enqueued' : ''}" data-action="enqueue">
             ${enqueueBtnLabel}
           </button>
+          <button type="button" class="btn-curator-matrix ${part.sent_to_matrix_note ? 'sent' : ''}" data-action="curator-matrix">
+            ${part.sent_to_matrix_note ? '✅ Matrix済' : '📝 Matrix Note'}
+          </button>
         </div>
         <div class="curator-feedback-box">
           <div class="curator-fb-title">📝 フィードバック（Core 推薦の学習に反映 / Wild Card には非適用）</div>
@@ -1395,6 +1561,40 @@
           enqueueBtn.disabled = false;
         }
       });
+
+      // Wire curator Matrix Note button
+      const curatorMatrixBtn = card.querySelector('[data-action="curator-matrix"]');
+      if (curatorMatrixBtn) {
+        curatorMatrixBtn.addEventListener('click', async () => {
+          if (part.sent_to_matrix_note) {
+            showToast('すでに Matrix Note へ送信済みです');
+            return;
+          }
+          curatorMatrixBtn.disabled = true;
+          curatorMatrixBtn.textContent = '⏳ 送信中...';
+          try {
+            const res = await fetch('/api/curator/send-to-matrix-note', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ date: curatorDaily.date, part_id: part.part_id, force: false }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.detail || 'Matrix Note 送信に失敗しました');
+            }
+            const data = await res.json();
+            part.sent_to_matrix_note = true;
+            part.matrix_note_id = data.note_id || part.matrix_note_id;
+            curatorMatrixBtn.classList.add('sent');
+            curatorMatrixBtn.textContent = '✅ Matrix済';
+            showToast(data.already_sent ? 'すでに Matrix Note へ送信済みです' : '📝 Matrix Note へメモを送信しました！');
+          } catch (err) {
+            showToast(`エラー: ${err.message}`);
+            curatorMatrixBtn.disabled = false;
+            curatorMatrixBtn.textContent = '📝 Matrix Note';
+          }
+        });
+      }
 
       // Wire feedback controls
       let currentRating = selectedRating;

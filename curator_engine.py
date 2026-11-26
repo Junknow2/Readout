@@ -775,6 +775,10 @@ async def run_daily_curation(
 
     try:
         cleanup_old_unadopted_audio(days=14)
+        try:
+            queue_manager.cleanup_listened_audio(retention_days=7)
+        except Exception as ce:
+            print(f"[Curator/Cleanup] Listened queue audio cleanup warning: {ce}")
         history = load_history()
         seen_urls = set(history.get("seen_urls", []))
         seen_titles = set(history.get("seen_titles", []))
@@ -1068,6 +1072,7 @@ def enqueue_curator_part(date_str: str, part_id: str) -> Tuple[Dict[str, Any], b
         raise ValueError(f"Part '{part_id}' not found in daily {date_str}")
 
     src_url = (target_part.get("source") or {}).get("url") or f"curator:{date_str}:{part_id}"
+    src_name = (target_part.get("source") or {}).get("source_name") or ""
     part_tag = target_part.get("part_type", "curator").upper()
     display_title = f"[{part_tag}] {target_part.get('title', 'Curator Episode')}"
     script_text = target_part.get("script_text") or ""
@@ -1078,6 +1083,8 @@ def enqueue_curator_part(date_str: str, part_id: str) -> Tuple[Dict[str, Any], b
         title=display_title,
         item_type="curator",
     )
+    if src_name:
+        queue_manager.update_item(item["id"], source_name=src_name)
     item_id = item["id"]
     dest_mp3 = OUTPUT_DIR / f"{item_id}.mp3"
     dest_txt = OUTPUT_DIR / f"{item_id}.txt"
@@ -1118,6 +1125,26 @@ def enqueue_curator_part(date_str: str, part_id: str) -> Tuple[Dict[str, Any], b
     _atomic_write_json(daily_path, daily)
 
     return item, needs_bg_tts, (script_text if needs_bg_tts else None)
+
+
+def mark_part_sent_to_matrix(date_str: str, part_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+    """Record that a Curator part was sent to Matrix Note."""
+    ensure_dirs()
+    daily_path = CURATOR_DIR / f"daily_{date_str}.json"
+    daily = _read_json(daily_path)
+    if not daily or not isinstance(daily.get("parts"), list):
+        return None
+    updated_part = None
+    for p in daily["parts"]:
+        if p.get("part_id") == part_id:
+            p["sent_to_matrix_note"] = True
+            p["matrix_note_id"] = note_id
+            p["matrix_sent_at"] = datetime.now(JST).isoformat()
+            updated_part = p
+            break
+    if updated_part:
+        _atomic_write_json(daily_path, daily)
+    return updated_part
 
 
 def _rebuild_core_preference_summary(feedback_list: List[Dict[str, Any]]) -> str:
