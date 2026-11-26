@@ -1429,6 +1429,57 @@ body {
   gap: 14px;
 }
 
+.curator-lineup-summary {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.curator-lineup-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.curator-lineup-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.curator-lineup-pill {
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.curator-lineup-pill.core {
+  background: rgba(204, 255, 0, 0.14);
+  color: var(--primary-color);
+  border: 1px solid rgba(204, 255, 0, 0.35);
+}
+
+.curator-lineup-pill.discovery {
+  background: rgba(0, 229, 255, 0.14);
+  color: var(--secondary-color);
+  border: 1px solid rgba(0, 229, 255, 0.35);
+}
+
+.curator-lineup-pill.wildcard {
+  background: rgba(236, 72, 153, 0.14);
+  color: #f472b6;
+  border: 1px solid rgba(236, 72, 153, 0.35);
+}
+
 .curator-card {
   background: var(--surface-color);
   border: 1px solid var(--surface-border);
@@ -1450,10 +1501,11 @@ body {
 .curator-part-badge {
   font-size: 0.72rem;
   font-weight: 800;
-  padding: 3px 9px;
+  padding: 3px 10px;
   border-radius: 20px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
+  white-space: nowrap;
 }
 
 .curator-part-badge.core {

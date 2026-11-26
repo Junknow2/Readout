@@ -3,8 +3,8 @@
 Readout - Personal Knowledge Curator Engine
 Implements:
   - 3 independent discovery tracks (Core, Discovery, Wild Card — Wild Card structurally isolated from user preference profile)
-  - 7-axis weighted evaluation + slot-based selection (not naive top-N)
-  - Independent 3-part, 7-step ear-friendly Japanese audio script generation (variable length, quality-first, strict katakana reading)
+  - 7-axis weighted evaluation + slot-based selection (6 parts: Core×2, Discovery×2, Wild Card×2, not naive top-N)
+  - Independent 6-part, 7-step ear-friendly Japanese audio script generation (variable length, quality-first, strict katakana reading)
   - Incremental VOICEPEAK pre-synthesis (each part published to daily_YYYY-MM-DD.json as soon as its MP3 is ready, with tts_engine tracking)
   - 14-day auto-cleanup of unadopted pre-synthesized MP3s (JSON, scripts, logs, history preserved permanently)
   - 5-level feedback learning loop updating Core-only preference summary
@@ -93,7 +93,7 @@ _CURATOR_STATUS: Dict[str, Any] = {
     "message": "待機中",
     "progress": 0,
     "parts_ready": 0,
-    "parts_total": 3,
+    "parts_total": 6,
     "started_at": None,
     "finished_at": None,
     "error": None,
@@ -517,23 +517,81 @@ def _evaluate_track(
     return results
 
 
+_THEME_STOPWORDS: Set[str] = {
+    "the", "and", "for", "with", "how", "why", "what", "when", "where", "who",
+    "from", "that", "this", "these", "those", "are", "was", "were", "have", "has",
+    "into", "about", "your", "our", "their", "new", "more", "can", "will", "not",
+    "but", "out", "use", "using", "study", "paper", "article", "report", "analysis",
+}
+
+MIN_SLOT_WEIGHTED_SCORE = 2.5
+
+
+def _extract_theme_tokens(title: str) -> Set[str]:
+    """Extract normalized significant English & Japanese tokens from a title for theme-overlap detection."""
+    text = (title or "").lower()
+    en_tokens = {
+        tok for tok in re.findall(r"[a-z0-9]{3,}", text) if tok not in _THEME_STOPWORDS
+    }
+    # Japanese kanji / katakana content chunks (2+ chars)
+    ja_tokens = set(re.findall(r"[\u4e00-\u9fff\u30a0-\u30ff]{2,}", text))
+    return en_tokens | ja_tokens
+
+
+def _is_similar_theme(title_a: str, title_b: str) -> bool:
+    """Return True if two titles refer to essentially the same topic/article."""
+    na = (title_a or "").strip().lower()
+    nb = (title_b or "").strip().lower()
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    toks_a = _extract_theme_tokens(na)
+    toks_b = _extract_theme_tokens(nb)
+    if not toks_a or not toks_b:
+        return False
+    overlap = toks_a & toks_b
+    if len(overlap) < 2:
+        return False
+    min_len = min(len(toks_a), len(toks_b))
+    union_len = len(toks_a | toks_b)
+    return (len(overlap) / max(1, min_len) >= 0.5) or (len(overlap) / max(1, union_len) >= 0.45)
+
+
 def select_slots(
     core_evaluated: List[Dict[str, Any]],
     discovery_evaluated: List[Dict[str, Any]],
     wildcard_evaluated: List[Dict[str, Any]],
+    min_weighted_score: float = MIN_SLOT_WEIGHTED_SCORE,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """
-    Slot-based selection (NOT naive top-N by total weighted score):
-      - Core slot: balances weighted_score (65%) + interest_fit (35%)
-      - Discovery slot: balances weighted_score (65%) + novelty (35%), avoiding Core URL & preferring distinct domain
-      - Wild Card slot: purely from wildcard_evaluated (preference-blind), balancing weighted_score (45%) + curiosity (30%) + originality (25%)
+    Slot-based selection for 6 daily parts (2 per track, NOT naive top-N by total weighted score):
+      - Core #1 / #2: balances weighted_score (65%) + interest_fit (35%)
+      - Discovery #1 / #2: balances weighted_score (65%) + novelty (35%)
+      - Wild Card #1 / #2: purely from wildcard_evaluated (preference-blind),
+        balancing weighted_score (45%) + curiosity (30%) + originality (25%)
+    Deduplication & quality rules:
+      - Never selects the same normalized URL twice.
+      - Excludes candidates with overlapping/same theme as already selected items.
+      - Prefers distinct domains when alternatives exist.
+      - Does NOT pad with low-quality items (< min_weighted_score) or cross-track backfill for #2 slots.
     """
     used_urls: Set[str] = set()
+    used_titles: List[str] = []
     used_domains: Set[str] = set()
 
-    def _pick_best(pool: List[Dict[str, Any]], key_fn, prefer_new_domain: bool = True) -> Optional[Dict[str, Any]]:
+    def _pick_best(
+        pool: List[Dict[str, Any]],
+        key_fn,
+        prefer_new_domain: bool = True,
+        enforce_quality_floor: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         available = [
-            c for c in pool if curator_sources.normalize_url(c.get("url", "")) not in used_urls
+            c
+            for c in pool
+            if curator_sources.normalize_url(c.get("url", "")) not in used_urls
+            and not any(_is_similar_theme(c.get("title", ""), t) for t in used_titles)
+            and (not enforce_quality_floor or float(c.get("weighted_score", 0.0)) >= min_weighted_score)
         ]
         if not available:
             return None
@@ -543,6 +601,8 @@ def select_slots(
                 available = diff_dom
         best = max(available, key=key_fn)
         used_urls.add(curator_sources.normalize_url(best.get("url", "")))
+        if best.get("title"):
+            used_titles.append(best["title"])
         if best.get("domain"):
             used_domains.add(best["domain"])
         return best
@@ -551,39 +611,57 @@ def select_slots(
         # Prefer rich full-text essays/articles over abstract-only academic stubs
         return -0.15 if c.get("access_type") == "open_abstract" else 0.0
 
-    # 1. Core
-    core_pool = core_evaluated or discovery_evaluated or wildcard_evaluated
-    part1_core = _pick_best(
-        core_pool,
-        key_fn=lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("interest_fit", 0.0) + _access_adj(c),
-        prefer_new_domain=False,
+    core_key = lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("interest_fit", 0.0) + _access_adj(c)
+    disc_key = lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("novelty", 0.0) + _access_adj(c)
+    wc_key = lambda c: (
+        0.45 * c.get("weighted_score", 0.0)
+        + 0.30 * c.get("scores", {}).get("curiosity", 0.0)
+        + 0.25 * c.get("scores", {}).get("originality", 0.0)
+        + _access_adj(c)
     )
 
-    # 2. Discovery
-    disc_pool = discovery_evaluated or core_evaluated or wildcard_evaluated
-    part2_discovery = _pick_best(
-        disc_pool,
-        key_fn=lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("novelty", 0.0) + _access_adj(c),
+    # Round 1: Pick #1 for each track first so all 3 tracks are represented even in smaller pools
+    core_1 = _pick_best(
+        core_evaluated or discovery_evaluated or wildcard_evaluated,
+        key_fn=core_key,
+        prefer_new_domain=False,
+    )
+    discovery_1 = _pick_best(
+        discovery_evaluated or core_evaluated or wildcard_evaluated,
+        key_fn=disc_key,
+        prefer_new_domain=True,
+    )
+    # Wild Card #1 strictly prefers wildcard_evaluated (preference-blind)
+    wildcard_1 = _pick_best(
+        wildcard_evaluated or discovery_evaluated or core_evaluated,
+        key_fn=wc_key,
         prefer_new_domain=True,
     )
 
-    # 3. Wild Card (strictly from wildcard_evaluated first)
-    wc_pool = wildcard_evaluated or discovery_evaluated or core_evaluated
-    part3_wildcard = _pick_best(
-        wc_pool,
-        key_fn=lambda c: (
-            0.45 * c.get("weighted_score", 0.0)
-            + 0.30 * c.get("scores", {}).get("curiosity", 0.0)
-            + 0.25 * c.get("scores", {}).get("originality", 0.0)
-            + _access_adj(c)
-        ),
+    # Round 2: Pick #2 for each track strictly from its own evaluated pool (no artificial padding)
+    core_2 = _pick_best(
+        core_evaluated,
+        key_fn=core_key,
+        prefer_new_domain=True,
+    )
+    discovery_2 = _pick_best(
+        discovery_evaluated,
+        key_fn=disc_key,
+        prefer_new_domain=True,
+    )
+    wildcard_2 = _pick_best(
+        wildcard_evaluated,
+        key_fn=wc_key,
         prefer_new_domain=True,
     )
 
     return {
-        "core": part1_core,
-        "discovery": part2_discovery,
-        "wildcard": part3_wildcard,
+        "core_1": core_1,
+        "core_2": core_2,
+        "discovery_1": discovery_1,
+        "discovery_2": discovery_2,
+        "wildcard_1": wildcard_1,
+        "wildcard_2": wildcard_2,
     }
 
 
@@ -596,12 +674,12 @@ def _generate_part_script(
     Returns dict with title_ja, why_selected, script_text, estimated_minutes.
     """
     if part_type in ("core", "discovery"):
-        target_chars = "3,500〜5,000字（音声で約10〜15分）"
-        est_min = 12
+        target_chars = "2,800〜4,200字（音声で約8〜12分）"
+        est_min = 10
         role_label = "Core Deep Dive（主領域の深掘り解説）" if part_type == "core" else "Discovery Deep Dive（隣接領域からの新視点）"
     else:
-        target_chars = "2,100〜3,000字（音声で約6〜9分）"
-        est_min = 8
+        target_chars = "2,000〜2,800字（音声で約6〜8分）"
+        est_min = 7
         role_label = "Wild Card（知的好奇心を刺激する意外な発見）"
 
     body_excerpt = (candidate.get("content") or "")[:16000]
@@ -750,7 +828,7 @@ async def run_daily_curation(
       1. Cleanup unadopted MP3s older than 14 days
       2. Crawl & strictly verify candidates (RSS, OpenAlex, J-STAGE, Gemini Grounding)
       3. Run 3 independent evaluations (Core, Discovery, Wild Card — Wild Card isolated from preferences)
-      4. Slot-based selection (3 independent parts: Core, Discovery, Wild Card)
+      4. Slot-based selection (6 independent parts: Core×2, Discovery×2, Wild Card×2)
       5. Generate 7-step Japanese audio scripts & immediately persist daily JSON, scripts txt, research log
       6. Incrementally synthesize VOICEPEAK MP3s part-by-part, updating daily_YYYY-MM-DD.json after EACH part!
     """
@@ -767,7 +845,7 @@ async def run_daily_curation(
         message="古い未採用音声を整理中...",
         progress=5,
         parts_ready=0,
-        parts_total=3,
+        parts_total=6,
         started_at=datetime.now(JST).isoformat(),
         finished_at=None,
         error=None,
@@ -810,15 +888,15 @@ async def run_daily_curation(
         disc_bucket = [c for c in verified if c.get("track_hint") == "discovery"]
         wc_bucket = [c for c in verified if c.get("track_hint") == "wildcard"]
 
-        # Ensure each track has sufficient candidates to evaluate
-        if len(core_bucket) < 5:
-            extras = [c for c in verified if c not in core_bucket][: 5 - len(core_bucket)]
+        # Ensure each track has sufficient candidates to evaluate for 2 picks per track
+        if len(core_bucket) < 6:
+            extras = [c for c in verified if c not in core_bucket][: 6 - len(core_bucket)]
             core_bucket = core_bucket + extras
-        if len(disc_bucket) < 5:
-            extras = [c for c in verified if c not in disc_bucket][: 5 - len(disc_bucket)]
+        if len(disc_bucket) < 6:
+            extras = [c for c in verified if c not in disc_bucket][: 6 - len(disc_bucket)]
             disc_bucket = disc_bucket + extras
-        if len(wc_bucket) < 5:
-            extras = [c for c in verified if c not in wc_bucket][: 5 - len(wc_bucket)]
+        if len(wc_bucket) < 6:
+            extras = [c for c in verified if c not in wc_bucket][: 6 - len(wc_bucket)]
             wc_bucket = wc_bucket + extras
 
         # Phase 2: 3 independent 7-axis evaluations
@@ -828,12 +906,12 @@ async def run_daily_curation(
             progress=35,
         )
         core_eval, disc_eval, wc_eval = await asyncio.gather(
-            asyncio.to_thread(_evaluate_track, core_bucket[:12], "core", core_pref),
-            asyncio.to_thread(_evaluate_track, disc_bucket[:12], "discovery", core_pref),
-            asyncio.to_thread(_evaluate_track, wc_bucket[:12], "wildcard", ""),
+            asyncio.to_thread(_evaluate_track, core_bucket[:14], "core", core_pref),
+            asyncio.to_thread(_evaluate_track, disc_bucket[:14], "discovery", core_pref),
+            asyncio.to_thread(_evaluate_track, wc_bucket[:14], "wildcard", ""),
         )
 
-        # Phase 3: Slot-based selection
+        # Phase 3: Slot-based selection (6 parts: Core×2, Discovery×2, Wild Card×2)
         selected = select_slots(core_eval, disc_eval, wc_eval)
         selected_urls = {
             curator_sources.normalize_url(c["url"]): slot
@@ -841,21 +919,24 @@ async def run_daily_curation(
             if c and c.get("url")
         }
 
-        # Phase 4: Generate independent 3-part 7-step scripts
+        # Phase 4: Generate independent 6-part 7-step scripts
         _update_status(
             phase="scripting",
-            message="3パート（7ステップ構成）の音声解説原稿を生成中...",
+            message="6パート（Core×2 / Discovery×2 / Wild Card×2・7ステップ構成）の音声解説原稿を生成中...",
             progress=55,
         )
 
         parts: List[Dict[str, Any]] = []
         slot_meta = [
-            ("part1_core", "core", "Part 1: Core Deep Dive"),
-            ("part2_discovery", "discovery", "Part 2: Discovery Deep Dive"),
-            ("part3_wildcard", "wildcard", "Part 3: Wild Card"),
+            ("part1_core_1", "core_1", "core", "Core #1: Core Deep Dive"),
+            ("part1_core_2", "core_2", "core", "Core #2: Core Deep Dive"),
+            ("part2_discovery_1", "discovery_1", "discovery", "Discovery #1: Discovery Deep Dive"),
+            ("part2_discovery_2", "discovery_2", "discovery", "Discovery #2: Discovery Deep Dive"),
+            ("part3_wildcard_1", "wildcard_1", "wildcard", "Wild Card #1: Wild Card"),
+            ("part3_wildcard_2", "wildcard_2", "wildcard", "Wild Card #2: Wild Card"),
         ]
-        for part_id, part_type, part_label in slot_meta:
-            cand = selected.get(part_type)
+        for part_id, slot_key, part_type, part_label in slot_meta:
+            cand = selected.get(slot_key)
             if not cand:
                 continue
             gen = await asyncio.to_thread(_generate_part_script, part_type, cand)
@@ -919,7 +1000,7 @@ async def run_daily_curation(
                     "scores": c.get("scores", {}),
                     "status": f"selected:{adopted_slot}" if adopted_slot else "not_selected",
                     "reason": (
-                        f"{adopted_slot.upper()} 枠として採用: {c.get('eval_reason', '')}"
+                        f"{re.sub(r'_(\d+)$', r' #\1', adopted_slot).upper()} 枠として採用: {c.get('eval_reason', '')}"
                         if adopted_slot
                         else f"枠選考で不採用（スコア {c.get('weighted_score', 0.0)}）: {c.get('eval_reason', '')}"
                     ),
@@ -955,10 +1036,19 @@ async def run_daily_curation(
             "candidates": log_candidates,
         }
 
+        shortfall_msgs: List[str] = []
+        if crawl_stats.get("shortfall_warning"):
+            shortfall_msgs.append(str(crawl_stats["shortfall_warning"]))
+        if len(parts) < 6:
+            shortfall_msgs.append(
+                f"良質な候補が不足したため、目標 6 本に対し {len(parts)} 本のみの選出となりました（不足分は水増しせず見送り）。"
+            )
+        combined_shortfall = " ".join(shortfall_msgs) if shortfall_msgs else None
+
         daily_doc = {
             "date": target_date,
             "generated_at": datetime.now(JST).isoformat(),
-            "shortfall_warning": crawl_stats.get("shortfall_warning"),
+            "shortfall_warning": combined_shortfall,
             "parts_total": len(parts),
             "parts_ready": 0,
             "parts": parts,

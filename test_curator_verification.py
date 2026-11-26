@@ -3,13 +3,13 @@
 Automated Verification Suite for Readout Personal Knowledge Curator.
 Tests:
   1. 7-axis weighted score calculation
-  2. Slot-based selection (Core / Discovery / Wild Card distinct from naive top-N)
+  2. 6-part slot-based selection (Core×2 / Discovery×2 / Wild Card×2, no duplicate URL/theme, no low-quality padding)
   3. Anti-overfitting guarantee (Wild Card prompt never receives preference profile)
   4. Mechanical paywall / 404 / short-body exclusion + academic abstract exception
   5. Katakana acronym safety-net sanitizer & katakana rules in all script prompts
   6. VOICEPEAK per-chunk retry recovery (code 3221225477 / code 1) & tts_engine return
-  7. 3-part curation structure (no Part 4 Connections) + legacy part4 backward compatibility
-  8. Zero-wait instant enqueue (with tts_engine propagation), 5-level feedback + memo, and FastAPI endpoints
+  7. 6-part curation structure + backward compatibility with legacy 3-part / part4_connections
+  8. Zero-wait instant enqueue (with tts_engine propagation), 5-level feedback + memo, Matrix Note, and FastAPI endpoints
 """
 
 from __future__ import annotations
@@ -57,21 +57,23 @@ def test_seven_axis_weighted_score():
 
 
 def test_slot_based_selection():
-    print("[Test 2] Slot-based selection (not naive top-N by weighted_score)...")
-    # Candidate A has highest weighted_score (4.6) but low interest_fit (1.0)
-    # Candidate B has slightly lower weighted_score (4.2) but max interest_fit (5.0) -> should win Core!
+    print("[Test 2] 6-part slot-based selection (Core×2, Discovery×2, Wild Card×2, dedup & no padding)...")
+    # Core pool:
+    # - "Core Fit Winner #1": lower weighted_score (4.2) but max interest_fit (5.0) -> wins core_1 over "General High Score"
+    # - "Core Fit Duplicate Theme": same topic as core_1 -> must be skipped for core_2
+    # - "Core Fit Winner #2": distinct topic & domain -> wins core_2
     core_pool = [
         {
-            "title": "General High Score",
+            "title": "General High Score Operations",
             "url": "https://a.example.com/1",
             "domain": "a.example.com",
-            "weighted_score": 4.6,
+            "weighted_score": 4.5,
             "interest_fit": 1.0,
             "novelty": 2.0,
             "scores": {"curiosity": 2.0, "originality": 2.0},
         },
         {
-            "title": "Core Fit Winner",
+            "title": "Pricing Strategy Field Experiments in Retail",
             "url": "https://b.example.com/2",
             "domain": "b.example.com",
             "weighted_score": 4.2,
@@ -79,51 +81,114 @@ def test_slot_based_selection():
             "novelty": 3.0,
             "scores": {"curiosity": 3.0, "originality": 3.0},
         },
+        {
+            "title": "Retail Pricing Strategy Field Experiments Revisited",
+            "url": "https://b2.example.com/2-dup",
+            "domain": "b2.example.com",
+            "weighted_score": 4.1,
+            "interest_fit": 4.9,
+            "novelty": 3.0,
+            "scores": {"curiosity": 3.0, "originality": 3.0},
+        },
+        {
+            "title": "Organizational Incentive Design Across Multinationals",
+            "url": "https://c.example.com/3",
+            "domain": "c.example.com",
+            "weighted_score": 4.3,
+            "interest_fit": 4.5,
+            "novelty": 3.5,
+            "scores": {"curiosity": 3.5, "originality": 3.5},
+        },
     ]
     disc_pool = [
         {
-            "title": "Boring Familiar",
-            "url": "https://c.example.com/3",
-            "domain": "c.example.com",
+            "title": "Boring Familiar Survey",
+            "url": "https://d1.example.com/4",
+            "domain": "d1.example.com",
             "weighted_score": 4.4,
             "interest_fit": 4.0,
             "novelty": 1.0,
             "scores": {"curiosity": 2.0, "originality": 2.0},
         },
         {
-            "title": "Adjacent Novel Winner",
-            "url": "https://d.example.com/4",
-            "domain": "d.example.com",
+            "title": "Collective Intelligence in Urban Transit Networks",
+            "url": "https://d2.example.com/5",
+            "domain": "d2.example.com",
             "weighted_score": 4.1,
             "interest_fit": 3.0,
             "novelty": 5.0,
             "scores": {"curiosity": 4.0, "originality": 4.0},
         },
+        {
+            "title": "Behavioral Economics of Preventive Healthcare",
+            "url": "https://d3.example.com/6",
+            "domain": "d3.example.com",
+            "weighted_score": 4.0,
+            "interest_fit": 3.5,
+            "novelty": 4.6,
+            "scores": {"curiosity": 4.0, "originality": 4.0},
+        },
     ]
     wc_pool = [
         {
-            "title": "Dry Academic",
-            "url": "https://e.example.com/5",
-            "domain": "e.example.com",
+            "title": "Dry Academic Baseline",
+            "url": "https://e1.example.com/7",
+            "domain": "e1.example.com",
             "weighted_score": 4.3,
             "interest_fit": 0.0,
             "novelty": 2.0,
             "scores": {"curiosity": 1.5, "originality": 1.5},
         },
         {
-            "title": "Wild Card Curiosity Winner",
-            "url": "https://f.example.com/6",
-            "domain": "f.example.com",
+            "title": "Why Ancient Polynesians Mapped Ocean Swells",
+            "url": "https://e2.example.com/8",
+            "domain": "e2.example.com",
             "weighted_score": 3.9,
             "interest_fit": 0.0,
             "novelty": 5.0,
             "scores": {"curiosity": 5.0, "originality": 5.0},
         },
+        {
+            "title": "How Mycelium Networks Balance Forest Nutrients",
+            "url": "https://e3.example.com/9",
+            "domain": "e3.example.com",
+            "weighted_score": 4.0,
+            "interest_fit": 0.0,
+            "novelty": 4.8,
+            "scores": {"curiosity": 4.8, "originality": 4.7},
+        },
     ]
+
     selected = curator_engine.select_slots(core_pool, disc_pool, wc_pool)
-    assert selected["core"]["title"] == "Core Fit Winner"
-    assert selected["discovery"]["title"] == "Adjacent Novel Winner"
-    assert selected["wildcard"]["title"] == "Wild Card Curiosity Winner"
+    assert len(selected) == 6
+    assert selected["core_1"]["title"] == "Pricing Strategy Field Experiments in Retail"
+    # Duplicate-theme article must be skipped; distinct Core #2 wins
+    assert selected["core_2"]["title"] == "Organizational Incentive Design Across Multinationals"
+    assert selected["discovery_1"]["title"] == "Collective Intelligence in Urban Transit Networks"
+    assert selected["discovery_2"]["title"] == "Behavioral Economics of Preventive Healthcare"
+    assert selected["wildcard_1"]["title"] == "Why Ancient Polynesians Mapped Ocean Swells"
+    assert selected["wildcard_2"]["title"] == "How Mycelium Networks Balance Forest Nutrients"
+
+    # All 6 selected URLs must be strictly unique
+    urls = [curator_sources.normalize_url(v["url"]) for v in selected.values() if v]
+    assert len(urls) == 6 and len(set(urls)) == 6, f"Duplicate URLs found: {urls}"
+
+    # Shortage & no artificial padding test: only 1 good Wild Card + 1 low-quality (<2.5) candidate
+    short_wc_pool = [
+        wc_pool[1],
+        {
+            "title": "Low Quality Clickbait",
+            "url": "https://low.example.com/bad",
+            "domain": "low.example.com",
+            "weighted_score": 1.8,
+            "interest_fit": 0.0,
+            "novelty": 4.0,
+            "scores": {"curiosity": 4.0, "originality": 4.0},
+        },
+    ]
+    short_sel = curator_engine.select_slots(core_pool, disc_pool, short_wc_pool)
+    assert short_sel["wildcard_1"]["title"] == "Why Ancient Polynesians Mapped Ocean Swells"
+    assert short_sel["wildcard_2"] is None, "Low-quality candidate should not be padded into wildcard_2"
     print("  PASS")
 
 
@@ -299,7 +364,7 @@ def test_voicepeak_chunk_retry_and_engine_return():
 
 
 def test_instant_enqueue_and_feedback_and_api():
-    print("[Test 7 & 8] 3-part structure, legacy part4 compat, instant 0s enqueue (tts_engine), feedback+memo, FastAPI...")
+    print("[Test 7 & 8] 6-part structure, legacy 3-part/part4 compat, instant 0s enqueue (tts_engine), feedback+memo, Matrix Note, FastAPI...")
     tmp_dir = Path(tempfile.mkdtemp(prefix="readout_curator_test_"))
     try:
         orig_c_dir = curator_engine.CURATOR_DIR
@@ -319,23 +384,22 @@ def test_instant_enqueue_and_feedback_and_api():
         main.OUTPUT_DIR = tmp_dir / "output"
         curator_engine.ensure_dirs()
 
+        # A. New 6-part daily JSON (2026-11-26)
         test_date = "2026-11-26"
-        mp3_name = f"{test_date}_part1_core.mp3"
-        # Create a dummy non-empty MP3 file
+        mp3_name = f"{test_date}_part1_core_1.mp3"
         (curator_engine.CURATOR_AUDIO_DIR / mp3_name).write_bytes(b"ID3" + b"\x00" * 1024)
 
-        # Include a legacy part4_connections record to verify backward compatibility doesn't crash API
-        daily_doc = {
+        six_part_doc = {
             "date": test_date,
             "generated_at": "2026-11-26T03:00:00+09:00",
             "shortfall_warning": None,
-            "parts_total": 2,
+            "parts_total": 6,
             "parts_ready": 1,
             "parts": [
                 {
-                    "part_id": "part1_core",
+                    "part_id": "part1_core_1",
                     "part_type": "core",
-                    "part_label": "Part 1: Core Deep Dive",
+                    "part_label": "Core #1: Core Deep Dive",
                     "title": "組織の意思決定バイアスを測る新手法",
                     "why_selected": "実証データに基づく高い説明力",
                     "source": {
@@ -351,12 +415,164 @@ def test_instant_enqueue_and_feedback_and_api():
                     "weighted_score": 4.5,
                     "interest_fit": 4.8,
                     "novelty": 4.0,
-                    "estimated_minutes": 12,
-                    "script_chars": 4000,
+                    "estimated_minutes": 10,
+                    "script_chars": 3400,
                     "script_text": "これはテスト用の音声解説原稿です。",
                     "audio_filename": mp3_name,
                     "audio_status": "ready",
-                    "audio_duration_sec": 720.0,
+                    "audio_duration_sec": 600.0,
+                    "tts_engine": "voicepeak",
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part1_core_2",
+                    "part_type": "core",
+                    "part_label": "Core #2: Core Deep Dive",
+                    "title": "価格弾力性フィールド実験の最新知見",
+                    "why_selected": "実務直結の定量エビデンス",
+                    "source": {"source_name": "MIT SMR", "url": "https://sloanreview.mit.edu/test-2/", "access_type": "free_full_text"},
+                    "scores": {k: 4.3 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.3,
+                    "interest_fit": 4.6,
+                    "novelty": 3.8,
+                    "estimated_minutes": 10,
+                    "script_chars": 3300,
+                    "script_text": "テスト原稿2。",
+                    "audio_filename": f"{test_date}_part1_core_2.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part2_discovery_1",
+                    "part_type": "discovery",
+                    "part_label": "Discovery #1: Discovery Deep Dive",
+                    "title": "都市交通と集合知の創発メカニズム",
+                    "why_selected": "隣接領域からの新鮮な視点",
+                    "source": {"source_name": "Works in Progress", "url": "https://worksinprogress.co/test-3/", "access_type": "free_full_text"},
+                    "scores": {k: 4.2 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.2,
+                    "interest_fit": 3.8,
+                    "novelty": 4.8,
+                    "estimated_minutes": 10,
+                    "script_chars": 3200,
+                    "script_text": "テスト原稿3。",
+                    "audio_filename": f"{test_date}_part2_discovery_1.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part2_discovery_2",
+                    "part_type": "discovery",
+                    "part_label": "Discovery #2: Discovery Deep Dive",
+                    "title": "行動経済学で解き明かす予防医療の設計",
+                    "why_selected": "行動科学の応用事例",
+                    "source": {"source_name": "Behavioral Scientist", "url": "https://behavioralscientist.org/test-4/", "access_type": "free_full_text"},
+                    "scores": {k: 4.1 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.1,
+                    "interest_fit": 3.6,
+                    "novelty": 4.5,
+                    "estimated_minutes": 9,
+                    "script_chars": 3000,
+                    "script_text": "テスト原稿4。",
+                    "audio_filename": f"{test_date}_part2_discovery_2.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part3_wildcard_1",
+                    "part_type": "wildcard",
+                    "part_label": "Wild Card #1: Wild Card",
+                    "title": "古代ポリネシアの波浪航法と空間認知",
+                    "why_selected": "意外性と知的好奇心",
+                    "source": {"source_name": "The Conversation", "url": "https://theconversation.com/test-5/", "access_type": "free_full_text"},
+                    "scores": {k: 4.2 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.2,
+                    "interest_fit": 0.0,
+                    "novelty": 5.0,
+                    "estimated_minutes": 7,
+                    "script_chars": 2400,
+                    "script_text": "テスト原稿5。",
+                    "audio_filename": f"{test_date}_part3_wildcard_1.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part3_wildcard_2",
+                    "part_type": "wildcard",
+                    "part_label": "Wild Card #2: Wild Card",
+                    "title": "菌根ネットワークが森の栄養循環を調整する仕組み",
+                    "why_selected": "生態系の驚くべき構造",
+                    "source": {"source_name": "Our World in Data", "url": "https://ourworldindata.org/test-6/", "access_type": "free_full_text"},
+                    "scores": {k: 4.1 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.1,
+                    "interest_fit": 0.0,
+                    "novelty": 4.9,
+                    "estimated_minutes": 7,
+                    "script_chars": 2300,
+                    "script_text": "テスト原稿6。",
+                    "audio_filename": f"{test_date}_part3_wildcard_2.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+            ],
+        }
+        (curator_engine.CURATOR_DIR / f"daily_{test_date}.json").write_text(
+            json.dumps(six_part_doc, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        # B. Legacy 3-part + part4_connections JSON (2026-11-25) for backward compatibility
+        legacy_date = "2026-11-25"
+        legacy_mp3 = f"{legacy_date}_part1_core.mp3"
+        (curator_engine.CURATOR_AUDIO_DIR / legacy_mp3).write_bytes(b"ID3" + b"\x00" * 1024)
+        legacy_doc = {
+            "date": legacy_date,
+            "generated_at": "2026-11-25T03:00:00+09:00",
+            "shortfall_warning": None,
+            "parts_total": 2,
+            "parts_ready": 1,
+            "parts": [
+                {
+                    "part_id": "part1_core",
+                    "part_type": "core",
+                    "part_label": "Part 1: Core Deep Dive",
+                    "title": "旧3パート互換テスト記事",
+                    "why_selected": "旧フォーマットの互換確認",
+                    "source": {
+                        "original_title": "Legacy Compat Article",
+                        "source_name": "Knowledge at Wharton",
+                        "url": "https://knowledge.wharton.upenn.edu/article/legacy-compat/",
+                        "access_type": "free_full_text",
+                    },
+                    "scores": {k: 4.2 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.2,
+                    "estimated_minutes": 10,
+                    "script_chars": 3000,
+                    "script_text": "旧フォーマットのテスト原稿。",
+                    "audio_filename": legacy_mp3,
+                    "audio_status": "ready",
+                    "audio_duration_sec": 500.0,
                     "tts_engine": "voicepeak",
                     "enqueued": False,
                     "queue_item_id": None,
@@ -374,7 +590,7 @@ def test_instant_enqueue_and_feedback_and_api():
                     "estimated_minutes": 3,
                     "script_chars": 800,
                     "script_text": "過去ログのテスト。",
-                    "audio_filename": f"{test_date}_part4_connections.mp3",
+                    "audio_filename": f"{legacy_date}_part4_connections.mp3",
                     "audio_status": "script_only",
                     "audio_duration_sec": 0.0,
                     "enqueued": False,
@@ -383,8 +599,8 @@ def test_instant_enqueue_and_feedback_and_api():
                 },
             ],
         }
-        (curator_engine.CURATOR_DIR / f"daily_{test_date}.json").write_text(
-            json.dumps(daily_doc, ensure_ascii=False, indent=2), encoding="utf-8"
+        (curator_engine.CURATOR_DIR / f"daily_{legacy_date}.json").write_text(
+            json.dumps(legacy_doc, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
         # Test API with auth temporarily bypassed if configured
@@ -396,18 +612,27 @@ def test_instant_enqueue_and_feedback_and_api():
             r_dates = client.get("/api/curator/dates")
             assert r_dates.status_code == 200
             assert test_date in r_dates.json()["dates"]
+            assert legacy_date in r_dates.json()["dates"]
 
+            # Verify 6-part daily response
             r_daily = client.get(f"/api/curator/daily?date={test_date}")
             assert r_daily.status_code == 200
-            assert r_daily.json()["daily"]["parts"][0]["part_id"] == "part1_core"
-            assert r_daily.json()["daily"]["parts"][0]["tts_engine"] == "voicepeak"
-            # Legacy part4 still returned cleanly
-            assert r_daily.json()["daily"]["parts"][1]["part_id"] == "part4_connections"
+            parts_resp = r_daily.json()["daily"]["parts"]
+            assert len(parts_resp) == 6
+            assert [p["part_id"] for p in parts_resp] == [
+                "part1_core_1",
+                "part1_core_2",
+                "part2_discovery_1",
+                "part2_discovery_2",
+                "part3_wildcard_1",
+                "part3_wildcard_2",
+            ]
+            assert parts_resp[0]["tts_engine"] == "voicepeak"
 
-            # Zero-wait instant enqueue (propagates tts_engine)
+            # Zero-wait instant enqueue on new 6-part ID (part1_core_1)
             r_enq = client.post(
                 "/api/curator/enqueue",
-                json={"date": test_date, "part_id": "part1_core"},
+                json={"date": test_date, "part_id": "part1_core_1"},
             )
             assert r_enq.status_code == 200
             enq_data = r_enq.json()
@@ -416,12 +641,12 @@ def test_instant_enqueue_and_feedback_and_api():
             assert enq_data["item"]["tts_engine"] == "voicepeak"
             assert (curator_engine.OUTPUT_DIR / f"{enq_data['item']['id']}.mp3").exists()
 
-            # 5-level feedback + reason chips + memo
+            # 5-level feedback + reason chips + memo on new 6-part ID
             r_fb = client.post(
                 "/api/curator/feedback",
                 json={
                     "date": test_date,
-                    "part_id": "part1_core",
+                    "part_id": "part1_core_1",
                     "rating": "非常に面白かった",
                     "reasons": ["視点が新鮮", "根拠が強い"],
                     "memo": "意思決定の定量化が実務に効く",
@@ -433,9 +658,51 @@ def test_instant_enqueue_and_feedback_and_api():
             assert "視点が新鮮" in fb_data["core_preference_summary"]
             assert "意思決定の定量化が実務に効く" in fb_data["core_preference_summary"]
 
+            # Backward compatibility: legacy 3-part (part1_core) enqueue, feedback & Matrix Note
+            r_leg_daily = client.get(f"/api/curator/daily?date={legacy_date}")
+            assert r_leg_daily.status_code == 200
+            assert r_leg_daily.json()["daily"]["parts"][0]["part_id"] == "part1_core"
+            assert r_leg_daily.json()["daily"]["parts"][1]["part_id"] == "part4_connections"
+
+            r_leg_enq = client.post(
+                "/api/curator/enqueue",
+                json={"date": legacy_date, "part_id": "part1_core"},
+            )
+            assert r_leg_enq.status_code == 200
+            assert r_leg_enq.json()["instant_ready"] is True
+
+            r_leg_fb = client.post(
+                "/api/curator/feedback",
+                json={
+                    "date": legacy_date,
+                    "part_id": "part1_core",
+                    "rating": 4,
+                    "reasons": ["実務に効く"],
+                    "memo": "旧3パート互換OK",
+                },
+            )
+            assert r_leg_fb.status_code == 200
+
+            with patch.object(
+                main,
+                "_post_to_matrix_note",
+                return_value={"note": {"id": "note-compat-1"}},
+            ):
+                r_mx_new = client.post(
+                    "/api/curator/send-to-matrix-note",
+                    json={"date": test_date, "part_id": "part1_core_1"},
+                )
+                assert r_mx_new.status_code == 200 and r_mx_new.json()["note_id"] == "note-compat-1"
+
+                r_mx_leg = client.post(
+                    "/api/curator/send-to-matrix-note",
+                    json={"date": legacy_date, "part_id": "part1_core"},
+                )
+                assert r_mx_leg.status_code == 200 and r_mx_leg.json()["note_id"] == "note-compat-1"
+
             # Verify persisted in history.json
             hist = curator_engine.load_history()
-            assert len(hist["feedback"]) == 1
+            assert len(hist["feedback"]) == 2
             assert hist["feedback"][0]["rating_label"] == "非常に面白かった"
         finally:
             main.READOUT_USERNAME, main.READOUT_PASSWORD = orig_u, orig_p

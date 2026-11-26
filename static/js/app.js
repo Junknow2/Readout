@@ -225,7 +225,7 @@
   async function checkOfflineCache() {
     if (!('caches' in window)) return;
     try {
-      const cache = await caches.open('readout-v6');
+      const cache = await caches.open('readout-v7');
       for (const item of queue) {
         if (item.has_audio !== false && !item.audio_deleted && item.status === 'ready' && item.audio_filename) {
           const audioUrl = `/audio/${item.audio_filename}`;
@@ -1380,6 +1380,20 @@
       .join('');
   }
 
+  function getCuratorBadgeLabel(part) {
+    const pType = part.part_type || 'core';
+    const baseLabels = {
+      core: 'Core',
+      discovery: 'Discovery',
+      wildcard: 'Wild Card',
+      connections: 'Connections (Archive)',
+    };
+    const base = baseLabels[pType] || pType;
+    const pid = part.part_id || '';
+    const m = pid.match(/_(\d+)$/);
+    return m ? `${base} #${m[1]}` : base;
+  }
+
   function renderCuratorDaily() {
     if (!curatorDailyList) return;
     if (!curatorDaily || !Array.isArray(curatorDaily.parts) || curatorDaily.parts.length === 0) {
@@ -1394,6 +1408,25 @@
 
     curatorDailyList.innerHTML = '';
 
+    // Compact daily lineup summary bar (supports both 6-part and legacy 3-part JSON)
+    const parts = curatorDaily.parts;
+    const totalCount = parts.length;
+    const readyCount = parts.filter((p) => p.audio_status === 'ready').length;
+    const coreCount = parts.filter((p) => p.part_type === 'core').length;
+    const discCount = parts.filter((p) => p.part_type === 'discovery').length;
+    const wcCount = parts.filter((p) => p.part_type === 'wildcard').length;
+    const summaryBar = document.createElement('div');
+    summaryBar.className = 'curator-lineup-summary';
+    summaryBar.innerHTML = `
+      <span class="curator-lineup-count">📋 ${totalCount} 本選出（音声準備完了 ${readyCount}/${totalCount}）</span>
+      <div class="curator-lineup-pills">
+        ${coreCount > 0 ? `<span class="curator-lineup-pill core">Core ×${coreCount}</span>` : ''}
+        ${discCount > 0 ? `<span class="curator-lineup-pill discovery">Discovery ×${discCount}</span>` : ''}
+        ${wcCount > 0 ? `<span class="curator-lineup-pill wildcard">Wild Card ×${wcCount}</span>` : ''}
+      </div>
+    `;
+    curatorDailyList.appendChild(summaryBar);
+
     if (curatorDaily.shortfall_warning) {
       const warn = document.createElement('div');
       warn.className = 'curator-status-banner';
@@ -1402,18 +1435,12 @@
       curatorDailyList.appendChild(warn);
     }
 
-    curatorDaily.parts.forEach((part) => {
+    parts.forEach((part) => {
       const card = document.createElement('article');
       card.className = 'curator-card';
 
       const pType = part.part_type || 'core';
-      const badgeLabels = {
-        core: 'Core',
-        discovery: 'Discovery',
-        wildcard: 'Wild Card',
-        connections: 'Connections (Archive)',
-      };
-      const badgeText = badgeLabels[pType] || pType;
+      const badgeText = getCuratorBadgeLabel(part);
 
       // Audio status pill
       const aStatus = part.audio_status || 'pending';
@@ -1700,7 +1727,12 @@
       let badgeLabel = '除外';
       if (st.startsWith('selected:')) {
         badgeCls = 'selected';
-        badgeLabel = `採用: ${st.split(':')[1].toUpperCase()}`;
+        const slotRaw = st.split(':')[1] || '';
+        const formattedSlot = slotRaw
+          .replace(/^wildcard/, 'wild card')
+          .replace(/_(\d+)$/, ' #$1')
+          .toUpperCase();
+        badgeLabel = `採用: ${formattedSlot}`;
       } else if (st === 'not_selected') {
         badgeCls = 'not_selected';
         badgeLabel = `候補（スコア ${c.weighted_score ?? '-'}）`;
