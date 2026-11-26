@@ -82,6 +82,7 @@ def add_item(
         "summary": "",
         "audio_filename": f"{item_id}.mp3",
         "audio_duration_sec": 0.0,
+        "tts_engine": None,
         "status": "pending",  # pending -> processing -> ready -> listened (or failed)
         "error_message": None,
         "page_count": 1,

@@ -4,8 +4,8 @@ Readout - Personal Knowledge Curator Engine
 Implements:
   - 3 independent discovery tracks (Core, Discovery, Wild Card — Wild Card structurally isolated from user preference profile)
   - 7-axis weighted evaluation + slot-based selection (not naive top-N)
-  - 4-part, 7-step ear-friendly Japanese audio script generation (variable length, quality-first)
-  - Incremental VOICEPEAK pre-synthesis (each part published to daily_YYYY-MM-DD.json as soon as its MP3 is ready)
+  - Independent 3-part, 7-step ear-friendly Japanese audio script generation (variable length, quality-first, strict katakana reading)
+  - Incremental VOICEPEAK pre-synthesis (each part published to daily_YYYY-MM-DD.json as soon as its MP3 is ready, with tts_engine tracking)
   - 14-day auto-cleanup of unadopted pre-synthesized MP3s (JSON, scripts, logs, history preserved permanently)
   - 5-level feedback learning loop updating Core-only preference summary
   - Zero-wait instant enqueue into Readout's main playback queue
@@ -93,7 +93,7 @@ _CURATOR_STATUS: Dict[str, Any] = {
     "message": "待機中",
     "progress": 0,
     "parts_ready": 0,
-    "parts_total": 4,
+    "parts_total": 3,
     "started_at": None,
     "finished_at": None,
     "error": None,
@@ -307,11 +307,16 @@ def build_core_evaluation_prompt(
 ) -> str:
     """Track A (Core): Uses user's Core preference summary."""
     cand_text = _format_candidates_for_prompt(candidates)
-    return f"""あなたは優秀な知的キュレーター（Track A: Core Interest Discovery）です。
-ユーザーの関心プロファイルを踏まえ、以下の実在・検証済み候補記事それぞれを7軸（各0〜5点、0.5点刻み可）と関心適合度・新規性で厳正に評価してください。
+    return f"""あなたは優秀な知的キュレーター（Track A: Core Deep Dive）です。
+読者の関心プロファイルと過去のフィードバックを踏まえ、以下の実在・検証済み候補記事それぞれを7軸（各0〜5点、0.5点刻み可）と関心適合度・新規性で厳正に評価してください。
 
-【ユーザーのCore関心プロファイル】
+【読者のCore関心プロファイル ＆ 過去フィードバック傾向】
 {core_preference_summary}
+
+【選定方針（重要）】
+- 本枠は他枠（Discovery / Wild Card）とは完全に独立しています。他枠と共通テーマに無理やり寄せる必要は一切なく、この1枠単体で「経営者・マーケティングリサーチ／インサイト実務家としての知的好奇心・HBR的満足感」を最大化する最高品質の記事を高く評価してください。
+- 読者の過去の高評価テーマ・好まれた理由・メモの傾向に強く合致する記事は `interest_fit` を高く、逆に「既知だった」「抽象的すぎ」など低評価傾向に該当する記事は厳しめに評価してください。
+- 純粋に難解な学術アブストラクトだけの記事（Access: open_abstract）より、十分な本文と具体例・実証データ・実務的洞察を持つ良質な論考記事（Knowledge at Wharton, MIT SMR, Behavioral Scientist, The Conversation, Works in Progress, Our World in Data, Greenbook, Quirk's, RIETI 等の free_full_text）を優先的に高く評価してください。
 
 【評価軸（各0〜5点）】
 - question_depth (問いの深さ)
@@ -320,7 +325,7 @@ def build_core_evaluation_prompt(
 - originality (独自性)
 - long_term_value (長期的価値)
 - curiosity (好奇心)
-- audio_suitability (音声適性)
+- audio_suitability (音声適性：具体例やストーリーがあり耳で聴いて面白いほど高評価)
 - interest_fit (Core関心適合度 0〜5)
 - novelty (新規性 0〜5)
 
@@ -359,11 +364,15 @@ def build_discovery_evaluation_prompt(
 ) -> str:
     """Track B (Adjacent Discovery): Connects adjacent disciplines to broader insights."""
     cand_text = _format_candidates_for_prompt(candidates)
-    return f"""あなたは優秀な知的キュレーター（Track B: Adjacent Discovery）です。
-ユーザーの主領域に隣接する分野（行動科学、経済学、社会システム、科学技術の応用など）から、新しい視座をもたらす候補を7軸（各0〜5点）＋関心適合度＋新規性で評価してください。
+    return f"""あなたは優秀な知的キュレーター（Track B: Discovery Deep Dive）です。
+読者の主領域に隣接する幅広い分野（行動科学、経済学、社会システム、心理学、歴史、科学技術の応用など）から、新しい視座と知的な発見をもたらす候補を7軸（各0〜5点）＋関心適合度＋新規性で評価してください。
 
-【参考（主領域の方向性）】
+【参考（読者の主領域・好みの方向性）】
 {core_preference_summary}
+
+【選定方針（重要）】
+- 本枠は他枠（Core / Wild Card）と完全に独立しています。共通テーマに無理やり寄せる必要は一切なく、この1枠単体で「経営者・マーケティングリサーチ／インサイト実務家としての知的好奇心・HBR的満足感」と視野の広がりを最大化する記事を高く評価してください。
+- 純粋に難解な学術アブストラクトだけの記事（Access: open_abstract）より、十分な本文と具体例・実証データ・豊かなストーリーと洞察を持つ良質な論考記事（Knowledge at Wharton, MIT SMR, Behavioral Scientist, The Conversation, Works in Progress, Our World in Data, Greenbook, Quirk's, RIETI 等の free_full_text）を優先的に高く評価してください。
 
 【評価軸（各0〜5点）】
 question_depth, explanatory_power, evidence_quality, originality, long_term_value, curiosity, audio_suitability, interest_fit, novelty
@@ -405,7 +414,11 @@ def build_wildcard_evaluation_prompt(candidates: List[Dict[str, Any]]) -> str:
     """
     cand_text = _format_candidates_for_prompt(candidates)
     return f"""あなたは独立した知的キュレーター（Track C: Serendipity / Wild Card）です。
-特定の読者の過去の好みや専門領域は一切考慮せず、純粋に「知的好奇心を強く揺さぶるか」「意外性・独自性・問いの面白さがあるか」「根拠と説明力があるか」だけで以下の実在・検証済み候補を7軸（各0〜5点）と新規性で評価してください。
+特定の読者の過去の好みや専門領域、他枠のテーマは一切考慮せず、純粋に「知的好奇心を強く揺さぶるか」「意外性・独自性・問いの面白さがあるか」「根拠と説明力があり耳で聴いて引き込まれるか」だけで以下の実在・検証済み候補を7軸（各0〜5点）と新規性で評価してください。
+
+【選定方針（重要）】
+- 他枠と共通テーマに寄せる必要は一切ありません。普段自分では探さない意外な領域の、独立した1本の良質な読み物として最も面白い記事を高く評価してください。
+- 短い学術アブストラクトだけ（Access: open_abstract）より、十分な本文と具体例・実証データ・魅力的な語り口を持つ良質な論考記事（Works in Progress, Our World in Data, The Conversation, Behavioral Scientist 等の free_full_text）を優先的に高く評価してください。
 
 【評価軸（各0〜5点）】
 question_depth, explanatory_power, evidence_quality, originality, long_term_value, curiosity, audio_suitability, novelty
@@ -534,11 +547,15 @@ def select_slots(
             used_domains.add(best["domain"])
         return best
 
+    def _access_adj(c: Dict[str, Any]) -> float:
+        # Prefer rich full-text essays/articles over abstract-only academic stubs
+        return -0.15 if c.get("access_type") == "open_abstract" else 0.0
+
     # 1. Core
     core_pool = core_evaluated or discovery_evaluated or wildcard_evaluated
     part1_core = _pick_best(
         core_pool,
-        key_fn=lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("interest_fit", 0.0),
+        key_fn=lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("interest_fit", 0.0) + _access_adj(c),
         prefer_new_domain=False,
     )
 
@@ -546,7 +563,7 @@ def select_slots(
     disc_pool = discovery_evaluated or core_evaluated or wildcard_evaluated
     part2_discovery = _pick_best(
         disc_pool,
-        key_fn=lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("novelty", 0.0),
+        key_fn=lambda c: 0.65 * c.get("weighted_score", 0.0) + 0.35 * c.get("novelty", 0.0) + _access_adj(c),
         prefer_new_domain=True,
     )
 
@@ -558,6 +575,7 @@ def select_slots(
             0.45 * c.get("weighted_score", 0.0)
             + 0.30 * c.get("scores", {}).get("curiosity", 0.0)
             + 0.25 * c.get("scores", {}).get("originality", 0.0)
+            + _access_adj(c)
         ),
         prefer_new_domain=True,
     )
@@ -611,6 +629,8 @@ def _generate_part_script(
 【厳守ルール】
 - ラジオ風の挨拶（「こんにちは」「今日も良い一日を」「〇〇の時間です」等）は一切入れないこと。
 - 表、図、URL、Markdown記号（#、*、-、・、`、~、|）、箇条書き記号は一切出力しないこと。句読点と自然な改行のみのプレーンテキストにすること。
+- **英単語・アルファベットの徹底カタカナ化（最重要）**: 音声合成エンジンがアルファベット表記の英単語をたどたどしく読むのを防ぐため、`script_text` 本文中の英単語・アルファベット略語・英語の媒体名・企業名・人名・専門用語は、**すべて耳で聴いて自然な日本語カタカナ読みに変換して出力し、アルファベットを本文に一切残さないこと**。
+  - 変換例: AI → エーアイ、ROI → アールオーアイ、KPI → ケーピーアイ、LLM → エルエルエム、MIT → エムアイティー、Harvard Business Review → ハーバード・ビジネス・レビュー、Works in Progress → ワークス・イン・プログレス、Nature → ネイチャー、P&G → ピーアンドジー、PANAS → パナス、Deep Dive → ディープダイブ。
 - 著作権に配慮し、原文の直訳や丸写しではなく、構造を噛み砕いた独自の日本語解説にすること。
 - 元記事にない数値・固有名詞・研究結果を創作しないこと。
 - {access_note}
@@ -651,70 +671,6 @@ def _generate_part_script(
         "why_selected": why_selected,
         "script_text": script_text,
         "estimated_minutes": est_minutes,
-    }
-
-
-def _generate_connections_script(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Generate Part 4: Connections (2-3 min, ~700-1,100 chars) + next research questions."""
-    summary_lines = []
-    for p in parts:
-        summary_lines.append(
-            f"- [{p['part_type'].upper()}] {p['title']} (出典: {p['source']['source_name']})\n"
-            f"  選定理由: {p['why_selected']}\n"
-            f"  原稿抜粋: {(p.get('script_text') or '')[:600]}"
-        )
-    joined = "\n\n".join(summary_lines)
-
-    prompt = f"""あなたは知的キュレーターです。
-本日選んだ以下の3つのテーマ（Core / Discovery / Wild Card）を横断し、Part 4「Connections」の日本語音声原稿（700〜1,100字、音声で約2〜3分）と、次回調査したい問いを3つ作成してください。
-
-【Part 4 で語るべきこと】
-- 3つのテーマの間に潜む構造的な繋がり・共通パターン
-- 逆に、テーマ同士が示す緊張関係・矛盾・視点のズレ
-- それらを踏まえて次に考えたくなる大きな問い
-
-【厳守ルール】
-- ラジオ風の挨拶や締めの掛け声は一切入れないこと。
-- Markdown記号、URL、箇条書き記号は原稿内に一切入れないこと。
-- 出力は必ず JSON オブジェクトのみとすること。
-
-出力フォーマット:
-{{
-  "title_ja": "今日の3テーマを結ぶ構造的視点（簡潔なタイトル）",
-  "why_selected": "3テーマ間の繋がりと緊張関係の要点（80〜120字）",
-  "script_text": "700〜1,100字のプレーンテキスト音声原稿...",
-  "next_research_questions": [
-    "次回調査したい問い1",
-    "次回調査したい問い2",
-    "次回調査したい問い3"
-  ]
-}}
-
-【本日の3テーマ】
-{joined}
-"""
-    raw = _call_gemini_text(prompt, temperature=0.65, max_output_tokens=4096)
-    try:
-        parsed = _extract_json_block(raw)
-        title_ja = (parsed.get("title_ja") or "今日の3テーマを結ぶ視点").strip()
-        why_selected = (parsed.get("why_selected") or "3つの独立したテーマの共通構造と矛盾を整理しました。").strip()
-        script_text = sanitize_curator_script(parsed.get("script_text") or "")
-        next_qs = parsed.get("next_research_questions") or []
-        if not isinstance(next_qs, list):
-            next_qs = []
-    except Exception:
-        title_ja = "今日の3テーマを結ぶ視点"
-        why_selected = "3つのテーマの繋がりと今後の問いを整理しました。"
-        script_text = sanitize_curator_script(raw)
-        next_qs = []
-
-    est_minutes = max(2, round(len(script_text) / 330)) if script_text else 3
-    return {
-        "title_ja": title_ja,
-        "why_selected": why_selected,
-        "script_text": script_text,
-        "estimated_minutes": est_minutes,
-        "next_research_questions": [str(q).strip() for q in next_qs if str(q).strip()],
     }
 
 
@@ -794,7 +750,7 @@ async def run_daily_curation(
       1. Cleanup unadopted MP3s older than 14 days
       2. Crawl & strictly verify candidates (RSS, OpenAlex, J-STAGE, Gemini Grounding)
       3. Run 3 independent evaluations (Core, Discovery, Wild Card — Wild Card isolated from preferences)
-      4. Slot-based selection (Core, Discovery, Wild Card) + Part 4 Connections
+      4. Slot-based selection (3 independent parts: Core, Discovery, Wild Card)
       5. Generate 7-step Japanese audio scripts & immediately persist daily JSON, scripts txt, research log
       6. Incrementally synthesize VOICEPEAK MP3s part-by-part, updating daily_YYYY-MM-DD.json after EACH part!
     """
@@ -811,7 +767,7 @@ async def run_daily_curation(
         message="古い未採用音声を整理中...",
         progress=5,
         parts_ready=0,
-        parts_total=4,
+        parts_total=3,
         started_at=datetime.now(JST).isoformat(),
         finished_at=None,
         error=None,
@@ -881,10 +837,10 @@ async def run_daily_curation(
             if c and c.get("url")
         }
 
-        # Phase 4: Generate 4-part 7-step scripts
+        # Phase 4: Generate independent 3-part 7-step scripts
         _update_status(
             phase="scripting",
-            message="4パート（7ステップ構成）の音声解説原稿を生成中...",
+            message="3パート（7ステップ構成）の音声解説原稿を生成中...",
             progress=55,
         )
 
@@ -925,48 +881,14 @@ async def run_daily_curation(
                     "audio_filename": f"{target_date}_{part_id}.mp3",
                     "audio_status": "pending" if synthesize_audio else "script_only",
                     "audio_duration_sec": 0.0,
+                    "tts_engine": None,
                     "enqueued": False,
                     "queue_item_id": None,
                     "feedback": None,
                 }
             )
 
-        # Part 4: Connections
         next_questions: List[str] = []
-        if parts:
-            conn = await asyncio.to_thread(_generate_connections_script, parts)
-            next_questions = conn.get("next_research_questions", [])
-            parts.append(
-                {
-                    "part_id": "part4_connections",
-                    "part_type": "connections",
-                    "part_label": "Part 4: Connections",
-                    "title": conn["title_ja"],
-                    "why_selected": conn["why_selected"],
-                    "source": {
-                        "original_title": "Cross-Theme Synthesis",
-                        "source_name": "Readout Curator Synthesis",
-                        "author": "AI Curator",
-                        "published_at": target_date,
-                        "url": "",
-                        "access_type": "synthesis",
-                        "lang": "ja",
-                    },
-                    "scores": {},
-                    "weighted_score": None,
-                    "interest_fit": None,
-                    "novelty": None,
-                    "estimated_minutes": conn["estimated_minutes"],
-                    "script_chars": len(conn["script_text"]),
-                    "script_text": conn["script_text"],
-                    "audio_filename": f"{target_date}_part4_connections.mp3",
-                    "audio_status": "pending" if synthesize_audio else "script_only",
-                    "audio_duration_sec": 0.0,
-                    "enqueued": False,
-                    "queue_item_id": None,
-                    "feedback": None,
-                }
-            )
 
         # Build Research Log (all evaluated + rejected candidates, excluding raw full body to keep JSON compact)
         all_eval_by_url: Dict[str, Dict[str, Any]] = {}
@@ -1074,7 +996,7 @@ async def run_daily_curation(
                 )
                 mp3_path = CURATOR_AUDIO_DIR / part["audio_filename"]
                 try:
-                    await poc_pipeline.generate_speech_async(
+                    used_engine = await poc_pipeline.generate_speech_async(
                         part["script_text"],
                         mp3_path,
                         voice=poc_pipeline.DEFAULT_VOICE,
@@ -1086,6 +1008,7 @@ async def run_daily_curation(
                         dur = round(len(part["script_text"]) / 5.5, 1)
                     part["audio_status"] = "ready"
                     part["audio_duration_sec"] = dur
+                    part["tts_engine"] = used_engine
                     daily_doc["parts_ready"] = sum(1 for x in parts if x.get("audio_status") == "ready")
                 except Exception as e:
                     print(f"  [Curator/TTS] Failed for {part['part_id']}: {e}")
@@ -1176,6 +1099,7 @@ def enqueue_curator_part(date_str: str, part_id: str) -> Tuple[Dict[str, Any], b
             title=display_title,
             summary=summary,
             audio_duration_sec=dur,
+            tts_engine=target_part.get("tts_engine"),
             status="ready",
             error_message=None,
         ) or item
@@ -1222,11 +1146,17 @@ def _rebuild_core_preference_summary(feedback_list: List[Dict[str, Any]]) -> str
         top_pos = sorted(pos_reasons.items(), key=lambda x: -x[1])[:4]
         pos_str = "・".join(k for k, _ in top_pos)
         lines.append(f"最近高評価だったテーマ: {', '.join(recent_likes)}" + (f"（好まれた理由: {pos_str}）" if pos_str else ""))
+        pos_memos = [f.get("memo", "").strip() for f in high_rated[-5:] if (f.get("memo") or "").strip()]
+        if pos_memos:
+            lines.append(f"読者からの高評価メモ: {' / '.join(pos_memos)}")
     if low_rated:
         recent_dislikes = [f"「{f.get('title', '')}」" for f in low_rated[-4:] if f.get("title")]
         top_neg = sorted(neg_reasons.items(), key=lambda x: -x[1])[:4]
         neg_str = "・".join(k for k, _ in top_neg)
         lines.append(f"既知または評価が低かった傾向: {', '.join(recent_dislikes)}" + (f"（避けたい傾向: {neg_str}）" if neg_str else ""))
+        neg_memos = [f.get("memo", "").strip() for f in low_rated[-4:] if (f.get("memo") or "").strip()]
+        if neg_memos:
+            lines.append(f"読者からの低評価・改善メモ: {' / '.join(neg_memos)}")
     return "\n".join(lines)
 
 

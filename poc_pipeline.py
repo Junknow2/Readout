@@ -64,21 +64,23 @@ PODCAST_REWRITE_PROMPT = """\
 【重要なリライト要件】
 1. **冒頭・結びの無駄な挨拶の完全排除**:
    - 「こんにちは」「〇〇の時間です」「今日も良い一日を」「良いランを」といったラジオ風・ポッドキャスト風の前置き挨拶や結びの掛け声は【一切出力しないでください】。
-   - 冒頭は必ず「{site_name}、『{title}』。」というシンプルな宣言から始めて、即座に本文の解説へ入ってください。
+   - 冒頭は必ず「{site_name}、『{title}』。」というシンプルな宣言から始めて、即座に本文の解説へ入ってください（媒体名やタイトルに含まれる英単語も、自然な日本語カタカナ読みに変換して書いてください）。
    - 結びも応援や挨拶は入れず、記事のまとめ・結論で潔く終了してください。
 2. **耳心地の良さとリズム感**:
    - 1文を短くし、テンポよく心地よい話し言葉（「です・ます」調）で執筆してください。
    - 移動中や環境音の中でも理解できるよう、複雑な複文や難解な漢語は避け、平易な表現に言い換えてください。
-3. **翻訳と口語化**:
+3. **翻訳・口語化と英単語の徹底カタカナ化（最重要）**:
    - 英語記事の場合は直訳を排し、自然な日本語のナレーションとして表現してください。
    - 専門用語が出るときは、簡単な補足や例えを交えて耳で理解できるようにしてください。
+   - **音声合成エンジンがアルファベットをたどたどしく読むのを防ぐため、本文中の英単語・アルファベット略語・英語の媒体名・企業名・人名・専門用語は、すべて耳で聴いて自然な日本語カタカナ読みに変換して出力し、アルファベット表記を本文に一切残さないでください。**
+   - 変換例: AI → エーアイ、ROI → アールオーアイ、KPI → ケーピーアイ、LLM → エルエルエム、MIT → エムアイティー、Harvard Business Review → ハーバード・ビジネス・レビュー、Works in Progress → ワークス・イン・プログレス、Nature → ネイチャー、P&G → ピーアンドジー、PANAS → パナス、Deep Dive → ディープダイブ。
 4. **ノイズの完全除去**:
    - URL、目次、参考文献、コードブロック、複雑な表、注釈番号などは完全に除外してください。
    - Markdownの見出し記号（# や ##）、箇条書き記号（* や - や ・）、アスタリスク、波線、絵文字は一切出力しないでください。音声合成エンジンが記号をそのまま読んでしまうのを防ぐため、句読点（「、」「。」）や疑問符・感嘆符のみを用いたプレーンテキストにしてください。
 5. **複数ページ・連載記事の自然な統合**:
    - 元記事が「ページ2」「続き」や複数回に分割されている場合でも、1本の一貫したストーリー・解説としてスムーズに繋げてください。「次のページに移ります」「ページ2では」といった不自然なメタ言及は避け、「続いて、後半では」「さらに別の側面として」のように自然なナレーションの展開としてまとめてください。
 6. **構成**:
-   - 冒頭: 「{site_name}、『{title}』。」から即座に本文の核心・背景へ導入。
+   - 冒頭: 「{site_name}、『{title}』。」（英字はカタカナ化）から即座に本文の核心・背景へ導入。
    - 本文: 核心となるポイントを分かりやすくロジカルに解説。
    - 結び: 記事の要点・結論の要約でシンプルに終了。
 
@@ -101,7 +103,7 @@ PDF_REWRITE_PROMPT = """\
 1. **タイトルの特定と構成**:
    - ドキュメント全体から最も適切で簡潔なタイトル（原題、論文名、または日本語訳タイトル）を特定してください。
    - 出力の1行目は必ず「TITLE: {特定したタイトル}」としてください。
-   - 2行目以降のナレーション原稿（本文）は、必ず「{特定したタイトル}についての解説。」というシンプルな宣言から始めて、即座に本文の解説に入ってください。
+   - 2行目以降のナレーション原稿（本文）は、必ず「{特定したタイトル}についての解説。」というシンプルな宣言から始めて、即座に本文の解説に入ってください（2行目以降のタイトル読み上げに含まれる英単語も自然な日本語カタカナ読みに変換してください）。
 2. **冒頭・結びの無駄な挨拶の完全排除**:
    - 「こんにちは」「〇〇の時間です」「今日も良い一日を」「リスナーの皆さん」といったラジオ風・ポッドキャスト風の前置き挨拶や結びの掛け声は【一切出力しないでください】。
    - 結びも応援や挨拶は入れず、ドキュメントの核心・結論のまとめで潔く終了してください。
@@ -111,19 +113,78 @@ PDF_REWRITE_PROMPT = """\
 4. **構造・2段組のシームレス結合**:
    - 2段組（2-column layout）やページ跨ぎの文章を、文脈や論理の途切れがないようにシームレスに結合して読んでください。
    - 複雑な数式や図表の数値羅列は避け、その意味や導かれる結論を言葉で分かりやすく噛み砕いて説明してください。
-5. **耳心地の良さと翻訳・口語化**:
+5. **耳心地の良さ・翻訳・英単語の徹底カタカナ化（最重要）**:
    - 英文・和文問わず、耳で聴きやすい自然な日本語ナレーション（「です・ます」調）にリライトしてください（英語論文等の場合は自然な日本語翻訳）。
    - 1文を短くし、テンポよく心地よい話し言葉にしてください。難解な専門用語が出るときは平易な補足や言い換えを交えてください。
+   - **音声合成エンジンがアルファベットをたどたどしく読むのを防ぐため、2行目以降のナレーション本文中の英単語・アルファベット略語・英語の媒体名・企業名・人名・専門用語は、すべて耳で聴いて自然な日本語カタカナ読みに変換して出力し、アルファベット表記を本文に一切残さないでください。**
+   - 変換例: AI → エーアイ、ROI → アールオーアイ、KPI → ケーピーアイ、LLM → エルエルエム、MIT → エムアイティー、Harvard Business Review → ハーバード・ビジネス・レビュー、Works in Progress → ワークス・イン・プログレス、Nature → ネイチャー、P&G → ピーアンドジー、PANAS → パナス、Deep Dive → ディープダイブ。
 
 【出力形式】
 TITLE: {特定したタイトル}
-{特定したタイトル}についての解説。{ここから本文のナレーション原稿...}
+{特定したタイトル（英字はカタカナ読み）}についての解説。{ここから本文のナレーション原稿...}
 """
+
+# Safety-net katakana pronunciation map for common English acronyms / terms before TTS
+TTS_ACRONYM_KATAKANA_MAP: dict[str, str] = {
+    "ESOMAR": "エソマー",
+    "RIETI": "リエティ",
+    "PANAS": "パナス",
+    "NBER": "エヌビーイーアール",
+    "OECD": "オーイーシーディー",
+    "SDGs": "エスディージーズ",
+    "SaaS": "サース",
+    "P&G": "ピーアンドジー",
+    "R&D": "アールアンドディー",
+    "M&A": "エムアンドエー",
+    "B2B": "ビートゥービー",
+    "B2C": "ビートゥーシー",
+    "IoT": "アイオーティー",
+    "AI": "エーアイ",
+    "ROI": "アールオーアイ",
+    "KPI": "ケーピーアイ",
+    "CEO": "シーイーオー",
+    "CFO": "シーエフオー",
+    "CTO": "シーティーオー",
+    "CMO": "シーエムオー",
+    "COO": "シーオーオー",
+    "DX": "ディーエックス",
+    "IT": "アイティー",
+    "HR": "エイチアール",
+    "PR": "ピーアール",
+    "API": "エーピーアイ",
+    "PDF": "ピーディーエフ",
+    "URL": "ユーアールエル",
+    "LLM": "エルエルエム",
+    "MBA": "エムビーエー",
+    "GDP": "ジーディーピー",
+    "HBR": "エイチビーアール",
+    "MIT": "エムアイティー",
+    "ESG": "イーエスジー",
+    "SNS": "エスエヌエス",
+    "SEO": "エスイーオー",
+    "OKR": "オーケーアール",
+    "NPS": "エヌピーエス",
+    "CRM": "シーアールエム",
+    "ERP": "イーアールピー",
+    "IPO": "アイピーオー",
+    "UI": "ユーアイ",
+    "UX": "ユーエックス",
+    "EC": "イーシー",
+    "VR": "ブイアール",
+    "AR": "エーアール",
+}
+
+_TTS_ACRONYM_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])"), reading)
+    for term, reading in sorted(TTS_ACRONYM_KATAKANA_MAP.items(), key=lambda kv: -len(kv[0]))
+]
 
 
 def sanitize_script_for_tts(text: str) -> str:
-    """Strip markdown markers and symbols that TTS engines might read literally."""
-    text = re.sub(r'[*_#`~]', '', text)
+    """Strip markdown markers/symbols and apply safety-net katakana conversion for common English acronyms."""
+    text = re.sub(r'[*_#`~]', '', text or '')
+    for pattern, reading in _TTS_ACRONYM_PATTERNS:
+        text = pattern.sub(reading, text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -554,10 +615,17 @@ def split_text_for_voicepeak(text: str, max_chars: int = 120) -> list[str]:
 
 
 _VOICEPEAK_LOCK = threading.Lock()
+VOICEPEAK_CHUNK_COOLDOWN_SEC = 0.4
+VOICEPEAK_MAX_RETRIES = 3
+VOICEPEAK_RETRY_BACKOFFS = (1.5, 3.0)
 
 
 def _synthesize_voicepeak_sync(text: str, output_mp3_path: Path, narrator: str = DEFAULT_VOICE) -> None:
-    """Synchronous worker to run VOICEPEAK CLI in chunks and convert/concat WAV to MP3 via ffmpeg."""
+    """
+    Synchronous worker to run VOICEPEAK CLI in chunks and convert/concat WAV to MP3 via ffmpeg.
+    Includes per-chunk retry with exponential backoff (1.5s -> 3.0s, up to 3 attempts) and
+    short inter-chunk cooldown (0.4s) to prevent transient Access Violation (3221225477) / single-instance (1) failures.
+    """
     if not VOICEPEAK_PATH.exists():
         raise FileNotFoundError(f"VOICEPEAK executable not found at {VOICEPEAK_PATH}")
 
@@ -575,6 +643,7 @@ def _synthesize_voicepeak_sync(text: str, output_mp3_path: Path, narrator: str =
             raise ValueError("No text provided for speech synthesis.")
 
         wav_files = []
+        total_chunks = len(chunks)
         with _VOICEPEAK_LOCK:
             for idx, chunk in enumerate(chunks):
                 temp_txt = work_dir / f"chunk_{idx:04d}.txt"
@@ -587,15 +656,45 @@ def _synthesize_voicepeak_sync(text: str, output_mp3_path: Path, narrator: str =
                     "-n", narrator,
                     "-o", str(temp_wav)
                 ]
-                res = subprocess.run(vp_cmd, capture_output=True, text=True, check=False)
-                if res.returncode != 0:
-                    err_msg = (res.stderr or res.stdout or "").strip()
-                    raise RuntimeError(f"VOICEPEAK failed on chunk {idx} (code {res.returncode}): {err_msg}")
 
-                if not temp_wav.exists() or temp_wav.stat().st_size == 0:
-                    raise RuntimeError(f"VOICEPEAK produced no output file for chunk {idx}")
+                last_error_msg = ""
+                chunk_succeeded = False
+                for attempt in range(1, VOICEPEAK_MAX_RETRIES + 1):
+                    if temp_wav.exists():
+                        try:
+                            temp_wav.unlink()
+                        except Exception:
+                            pass
+
+                    res = subprocess.run(vp_cmd, capture_output=True, text=True, check=False)
+                    if res.returncode == 0 and temp_wav.exists() and temp_wav.stat().st_size > 0:
+                        chunk_succeeded = True
+                        break
+
+                    err_detail = (res.stderr or res.stdout or "").strip()
+                    if res.returncode != 0:
+                        last_error_msg = f"VOICEPEAK failed on chunk {idx} (code {res.returncode}): {err_detail}"
+                    else:
+                        last_error_msg = f"VOICEPEAK produced no output file for chunk {idx}"
+
+                    if attempt < VOICEPEAK_MAX_RETRIES:
+                        backoff = (
+                            VOICEPEAK_RETRY_BACKOFFS[attempt - 1]
+                            if attempt - 1 < len(VOICEPEAK_RETRY_BACKOFFS)
+                            else VOICEPEAK_RETRY_BACKOFFS[-1]
+                        )
+                        print(
+                            f"  [!] {last_error_msg} — retrying chunk {idx + 1}/{total_chunks} "
+                            f"(attempt {attempt + 1}/{VOICEPEAK_MAX_RETRIES}) after {backoff:.1f}s..."
+                        )
+                        time.sleep(backoff)
+
+                if not chunk_succeeded:
+                    raise RuntimeError(f"{last_error_msg} (after {VOICEPEAK_MAX_RETRIES} attempts)")
 
                 wav_files.append(temp_wav)
+                if idx < total_chunks - 1 and VOICEPEAK_CHUNK_COOLDOWN_SEC > 0:
+                    time.sleep(VOICEPEAK_CHUNK_COOLDOWN_SEC)
 
         # If single chunk, convert directly; if multiple chunks, concatenate using ffmpeg
         if len(wav_files) == 1:
@@ -662,9 +761,9 @@ async def generate_speech_edge_tts(text: str, output_path: Path, voice: str = FA
     print(f"  [+] Generated audio file via edge-tts: {output_path} ({file_size_kb:.1f} KB) in {elapsed:.2f}s")
 
 
-async def generate_speech_async(text: str, output_path: Path, voice: str = DEFAULT_VOICE, engine: str = DEFAULT_TTS_ENGINE):
+async def generate_speech_async(text: str, output_path: Path, voice: str = DEFAULT_VOICE, engine: str = DEFAULT_TTS_ENGINE) -> str:
     """
-    Generate MP3 audio from text.
+    Generate MP3 audio from text and return the actual TTS engine used ("voicepeak" or "edge_tts").
     Primary engine is VOICEPEAK (default: 'Japanese Female 2').
     Automatically falls back to Edge-TTS ('ja-JP-NanamiNeural') if VOICEPEAK fails or is unavailable.
     """
@@ -675,12 +774,13 @@ async def generate_speech_async(text: str, output_path: Path, voice: str = DEFAU
     if chosen_engine == "voicepeak":
         try:
             await generate_speech_voicepeak(text, output_path, narrator=voice)
-            return
+            return "voicepeak"
         except Exception as e:
             print(f"  [!] VOICEPEAK synthesis failed ({e}). Automatically falling back to Edge-TTS ({FALLBACK_EDGE_VOICE})...")
 
     edge_voice = voice if (voice and voice.startswith("ja-JP-")) else FALLBACK_EDGE_VOICE
     await generate_speech_edge_tts(text, output_path, voice=edge_voice)
+    return "edge_tts"
 
 
 def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL, max_pages: int = 10, engine: str = DEFAULT_TTS_ENGINE) -> dict:
@@ -711,7 +811,7 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
     print(f"  [+] Saved script text to: {txt_path}")
 
     # Step C: TTS
-    asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice, engine=engine))
+    used_engine = asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice, engine=engine))
 
     total_time = time.time() - total_t0
     file_size_kb = output_mp3_path.stat().st_size / 1024
@@ -728,7 +828,7 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
         "output_txt": str(txt_path),
         "file_size_kb": file_size_kb,
         "total_time_seconds": total_time,
-        "engine": engine,
+        "engine": used_engine,
         "voice": voice,
         "model": model,
     }
@@ -736,7 +836,7 @@ def run_pipeline(url: str, output_mp3_path: Path, voice: str = DEFAULT_VOICE, mo
     print("=" * 60)
     print(f"Pipeline Completed Successfully in {total_time:.2f} seconds!")
     print(f"Pages Merged: {result['page_count']}")
-    print(f"Audio Output: {output_mp3_path} ({file_size_kb:.1f} KB)")
+    print(f"Audio Output: {output_mp3_path} ({file_size_kb:.1f} KB, engine={used_engine})")
     print("=" * 60)
     return result
 
@@ -768,7 +868,7 @@ def run_pdf_pipeline(
     txt_path.write_text(script_text, encoding="utf-8")
     print(f"  [+] Saved script text to: {txt_path}")
 
-    asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice, engine=engine))
+    used_engine = asyncio.run(generate_speech_async(script_text, output_mp3_path, voice=voice, engine=engine))
 
     total_time = time.time() - total_t0
     file_size_kb = output_mp3_path.stat().st_size / 1024
@@ -782,7 +882,7 @@ def run_pdf_pipeline(
         "output_txt": str(txt_path),
         "file_size_kb": file_size_kb,
         "total_time_seconds": total_time,
-        "engine": engine,
+        "engine": used_engine,
         "voice": voice,
         "model": model,
     }
@@ -790,7 +890,7 @@ def run_pdf_pipeline(
     print("=" * 60)
     print(f"PDF Pipeline Completed Successfully in {total_time:.2f} seconds!")
     print(f"Title: {title}")
-    print(f"Audio Output: {output_mp3_path} ({file_size_kb:.1f} KB)")
+    print(f"Audio Output: {output_mp3_path} ({file_size_kb:.1f} KB, engine={used_engine})")
     print("=" * 60)
     return result
 

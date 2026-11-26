@@ -168,6 +168,16 @@
       .replace(/'/g, '&#039;');
   }
 
+  function renderEngineBadge(engine) {
+    if (engine === 'voicepeak') {
+      return '<span class="badge-tts-engine voicepeak" title="VOICEPEAKで生成">🎙️ VOICEPEAK</span>';
+    }
+    if (engine === 'edge_tts') {
+      return '<span class="badge-tts-engine edge-tts" title="Edge-TTSで生成">🔊 Edge-TTS</span>';
+    }
+    return '';
+  }
+
   // -------------------------------------------------------------
   // Tab Switcher (3 tabs: queue | curator | rss)
   // -------------------------------------------------------------
@@ -211,7 +221,7 @@
   async function checkOfflineCache() {
     if (!('caches' in window)) return;
     try {
-      const cache = await caches.open('readout-v1');
+      const cache = await caches.open('readout-v4');
       for (const item of queue) {
         if (item.status === 'ready' && item.audio_filename) {
           const audioUrl = `/audio/${item.audio_filename}`;
@@ -592,6 +602,9 @@
         offlineBadgeHtml = `<span class="badge-offline">⚡ オフライン済</span>`;
       }
 
+      // TTS Engine Badge
+      const engineBadgeHtml = renderEngineBadge(item.tts_engine);
+
       // Duration Badge
       let durationHtml = '';
       if (item.audio_duration_sec > 0) {
@@ -605,6 +618,7 @@
             ${statusBadgeHtml}
             ${pdfBadgeHtml}
             ${pageBadgeHtml}
+            ${engineBadgeHtml}
             ${offlineBadgeHtml}
             ${durationHtml}
           </div>
@@ -1234,7 +1248,7 @@
         core: 'Core',
         discovery: 'Discovery',
         wildcard: 'Wild Card',
-        connections: 'Connections',
+        connections: 'Connections (Archive)',
       };
       const badgeText = badgeLabels[pType] || pType;
 
@@ -1252,6 +1266,7 @@
         audioBadgeHtml = `<span class="curator-audio-status expired">期限切れ(再合成可)</span>`;
       }
 
+      const engineBadgeHtml = renderEngineBadge(part.tts_engine);
       const estHtml = `<span class="badge-duration">約${part.estimated_minutes || '?'}分</span>`;
 
       // Source metadata
@@ -1323,6 +1338,7 @@
         <div class="curator-card-head">
           <span class="curator-part-badge ${escapeHtml(pType)}">${escapeHtml(badgeText)}</span>
           <div class="curator-audio-badges">
+            ${engineBadgeHtml}
             ${estHtml}
             ${audioBadgeHtml}
           </div>

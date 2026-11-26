@@ -51,18 +51,19 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - ページ間の重複タイトルやフッターノイズを自動除去し、Gemini 3.8 Flash で1本の自然なポッドキャスト原稿としてリライト ➜ 1つの高品質音声（MP3）に統合生成。
    - PWAのキュー画面にも「全Nページ結合」バッジを自動表示。
 
-5. **最高峰ローカル音声合成「VOICEPEAK」（女性2）＆ ffmpeg 結合パイプライン (`poc_pipeline.py`)**:
+5. **最高峰ローカル音声合成「VOICEPEAK」（女性2）＆ 安定化・エンジン可視化 (`poc_pipeline.py`)**:
    - 音声エンジンとしてローカルに導入された「VOICEPEAK」（ナレーター: `Japanese Female 2` / 女性2）を標準採用。クラウドTTSを凌駕する自然なアクセント・滑らかな抑揚を実現。
-   - **インテリジェント・センテンス分割**: VOICEPEAK CLI の文字数上限（140文字/回）を自動克服するため、文境界（`。` `！` `？` 改行）および句読点（`、`）で120文字前後のチャンクへ自然に自動分割して生成。
+   - **インテリジェント・センテンス分割 ＆ 長文合成安定化**: VOICEPEAK CLI の文字数上限（140文字/回）を克服するため文境界で120文字前後へ自動分割。チャンク間のクールダウン待機（0.4秒）と、一時的なアクセス違反（`code 3221225477`）や多重起動ガード（`code 1`）に対する**チャンク単位の自動リトライ（最大3回、1.5秒→3秒バックオフ）**により長文でも安定完走。
+   - **英単語・アルファベットの徹底カタカナ化**: Web記事・PDF・Curator の全原稿生成プロンプトで英単語・略語・媒体名・人名を自然なカタカナ読みへ変換し、さらに TTS 直前の軽量サニタイザー（`AI`→`エーアイ`, `ROI`→`アールオーアイ`, `KPI`→`ケーピーアイ`, `LLM`→`エルエルエム`, `MIT`→`エムアイティー`, `P&G`→`ピーアンドジー`, `RIETI`→`リエティ` 等）を安全ネットとして適用。
    - **ffmpeg concat 192kbps エンコード**: 生成されたチャンク WAV 群を ffmpeg の concat demuxer で無劣化・シームレスに結合し、192kbps MP3 として高速エンコード。作業後の一時ファイルは自動安全消去。
-   - **自動フォールバック設計**: VOICEPEAK 未検出時やエラー発生時は、従来の `edge_tts`（`ja-JP-NanamiNeural`）へ自動フォールバックする安心の二重化設計。
+   - **自動フォールバック ＆ 使用エンジンバッジ表示**: VOICEPEAK 未検出時やリトライ上限超過時は `edge_tts`（`ja-JP-NanamiNeural`）へ自動フォールバック。実際に使用したエンジン（`tts_engine`）を各アイテム・Curator パートへ記録し、UI 上に控えめなバッジ（`🎙️ VOICEPEAK` / `🔊 Edge-TTS`）を表示。
 
 6. **Personal Knowledge Curator（AI 知的キュレーション ＆ 深夜事前音声化 ＆ フィードバック学習ループ）(`curator_sources.py`, `curator_engine.py`, `run_curator_daily.bat`)**:
    - **多ソース巡回 ＆ 厳格なハルシネーション/ペイウォール排除**: Knowledge at Wharton、MIT Sloan Management Review、RIETI、Behavioral Scientist、The Conversation、Greenbook、Quirk's、ESOMAR、Our World in Data、Works in Progress、NBER、J-STAGE API、OpenAlex API、さらに Gemini Google Search Grounding を組み合わせ、全候補を Python 側で実アクセス・本文検証（404・ログイン壁・ペイウォール・本文不足を機械的に除外し Research Log へ記録）。
-   - **3 独立探索 ＆ 7 軸加重評価 ＆ 枠別選考**: Core / Discovery / Wild Card の 3 トラックで独立評価（**Wild Card には過去の好みプロファイルを一切渡さず過剰適合を構造的に防止**）。7 軸加重スコア（問いの深さ 20%、説明力 20%、根拠の質 20%、独自性 15%、長期的価値 10%、好奇心 10%、音声適性 5%）と関心適合度・新規性から枠別選考。
-   - **4 パート編成 ＆ 7 ステップ音声原稿**: Part 1（Core Deep Dive）、Part 2（Discovery Deep Dive）、Part 3（Wild Card）、Part 4（Connections）を 7 ステップ構成の自然な日本語ナレーション原稿として生成。
-   - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開。14 日より前の未採用 MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
-   - **待ち時間 0 秒の即キュー投入 ＆ 5 段階フィードバック**: `✨ Curator` タブからワンタップで事前音声化済み MP3 を即座にメイン再生キューへ追加（`status="ready"`）。5 段階評価＋理由チップ＋任意メモで Core 関心プロファイルを継続学習。Research Log の不採用記事も「＋ 自分で聴く」で通常キューへ投入可能。
+   - **3 独立探索 ＆ 7 軸加重評価 ＆ 枠別選考**: Core / Discovery / Wild Card の 3 トラックで独立評価（**Wild Card には過去の好みプロファイルを一切渡さず過剰適合を構造的に防止**）。共通テーマに無理やり寄せず、各枠単体で充実した全文論考記事（`free_full_text`）を優先し、7 軸加重スコア（問いの深さ 20%、説明力 20%、根拠の質 20%、独自性 15%、長期的価値 10%、好奇心 10%、音声適性 5%）と関心適合度・新規性から枠別選考。
+   - **独立 3 パート編成 ＆ 7 ステップ音声原稿**: Part 1（Core Deep Dive）、Part 2（Discovery Deep Dive）、Part 3（Wild Card）の独立 3 パートを 7 ステップ構成・英単語カタカナ化済みの自然な日本語ナレーション原稿として生成（過去ログの旧 `part4_connections` も後方互換表示に対応）。
+   - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開（使用エンジン `tts_engine` も記録）。14 日より前の未採用 MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
+   - **待ち時間 0 秒の即キュー投入 ＆ 5 段階フィードバック**: `✨ Curator` タブからワンタップで事前音声化済み MP3 を即座にメイン再生キューへ追加（`status="ready"`、`tts_engine` 引き継ぎ）。5 段階評価＋理由チップ＋任意メモで Core 関心プロファイルを継続学習。Research Log の不採用記事も「＋ 自分で聴く」で通常キューへ投入可能。
 
 ---
 

@@ -6,13 +6,15 @@ Tests:
   2. Slot-based selection (Core / Discovery / Wild Card distinct from naive top-N)
   3. Anti-overfitting guarantee (Wild Card prompt never receives preference profile)
   4. Mechanical paywall / 404 / short-body exclusion + academic abstract exception
-  5. Zero-wait instant enqueue when pre-synthesized MP3 exists
-  6. 5-level feedback saving & Core preference summary update
-  7. FastAPI Curator endpoints smoke test via TestClient
+  5. Katakana acronym safety-net sanitizer & katakana rules in all script prompts
+  6. VOICEPEAK per-chunk retry recovery (code 3221225477 / code 1) & tts_engine return
+  7. 3-part curation structure (no Part 4 Connections) + legacy part4 backward compatibility
+  8. Zero-wait instant enqueue (with tts_engine propagation), 5-level feedback + memo, and FastAPI endpoints
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -26,6 +28,7 @@ from fastapi.testclient import TestClient
 import curator_engine
 import curator_sources
 import main
+import poc_pipeline
 import queue_manager
 
 
@@ -229,8 +232,74 @@ def test_paywall_and_verification_filters():
     print("  PASS")
 
 
+def test_katakana_sanitizer_and_prompts():
+    print("[Test 5] Katakana acronym safety-net sanitizer & katakana rules in all prompts...")
+    sample = "最新のAIとLLMがROIやKPIを改善し、MITやRIETI、P&G、PANAS、HBRの知見も活かされる。"
+    sanitized = poc_pipeline.sanitize_script_for_tts(sample)
+    for expected in ("エーアイ", "エルエルエム", "アールオーアイ", "ケーピーアイ", "エムアイティー", "リエティ", "ピーアンドジー", "パナス", "エイチビーアール"):
+        assert expected in sanitized, f"Expected '{expected}' in sanitized text: {sanitized}"
+    for forbidden in ("AI", "LLM", "ROI", "KPI", "MIT", "RIETI", "P&G", "PANAS", "HBR"):
+        assert forbidden not in sanitized, f"Unexpected raw acronym '{forbidden}' remained: {sanitized}"
+
+    # Ensure word boundary protection (do not corrupt substrings inside longer tokens)
+    safe_word = poc_pipeline.sanitize_script_for_tts("EMAIL と MAIN はそのまま")
+    assert "EMAIL" in safe_word and "MAIN" in safe_word, f"Word boundary broken: {safe_word}"
+
+    # Verify katakana instruction exists in Web/PDF rewrite prompts
+    assert "カタカナ" in poc_pipeline.PODCAST_REWRITE_PROMPT
+    assert "カタカナ" in poc_pipeline.PDF_REWRITE_PROMPT
+
+    # Verify Part 4 Connections generator is removed
+    assert not hasattr(curator_engine, "_generate_connections_script"), "_generate_connections_script should be removed"
+    print("  PASS")
+
+
+def test_voicepeak_chunk_retry_and_engine_return():
+    print("[Test 6] VOICEPEAK per-chunk retry (code 3221225477 / code 1) & tts_engine return...")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="readout_vp_retry_test_"))
+    try:
+        out_mp3 = tmp_dir / "out.mp3"
+        fake_vp_exe = tmp_dir / "voicepeak.exe"
+        fake_vp_exe.write_bytes(b"fake")
+
+        vp_calls = []
+
+        def fake_subprocess_run(cmd, capture_output=True, text=True, check=False):
+            exe = str(cmd[0]).lower()
+            if "voicepeak" in exe:
+                vp_calls.append(cmd)
+                attempt_no = len(vp_calls)
+                out_wav = Path(cmd[cmd.index("-o") + 1])
+                if attempt_no == 1:
+                    return MagicMock(returncode=3221225477, stdout="", stderr="Access Violation")
+                if attempt_no == 2:
+                    return MagicMock(returncode=1, stdout="", stderr="Another instance is running")
+                out_wav.write_bytes(b"RIFF" + b"\x00" * 256)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            else:
+                # ffmpeg conversion
+                Path(cmd[-1]).write_bytes(b"ID3" + b"\x00" * 512)
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch.object(poc_pipeline, "VOICEPEAK_PATH", fake_vp_exe),
+            patch.object(poc_pipeline, "VOICEPEAK_RETRY_BACKOFFS", (0.01, 0.01)),
+            patch.object(poc_pipeline, "VOICEPEAK_CHUNK_COOLDOWN_SEC", 0.0),
+            patch("poc_pipeline.subprocess.run", side_effect=fake_subprocess_run),
+        ):
+            used_engine = asyncio.run(
+                poc_pipeline.generate_speech_async("これはリトライ検証用のテスト原稿です。", out_mp3)
+            )
+            assert used_engine == "voicepeak", f"Expected 'voicepeak', got '{used_engine}'"
+            assert len(vp_calls) == 3, f"Expected 3 attempts (2 failures + 1 success), got {len(vp_calls)}"
+            assert out_mp3.exists() and out_mp3.stat().st_size > 0
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    print("  PASS")
+
+
 def test_instant_enqueue_and_feedback_and_api():
-    print("[Test 5 & 6 & 7] Instant 0s enqueue, feedback persistence, and FastAPI endpoints...")
+    print("[Test 7 & 8] 3-part structure, legacy part4 compat, instant 0s enqueue (tts_engine), feedback+memo, FastAPI...")
     tmp_dir = Path(tempfile.mkdtemp(prefix="readout_curator_test_"))
     try:
         orig_c_dir = curator_engine.CURATOR_DIR
@@ -255,11 +324,12 @@ def test_instant_enqueue_and_feedback_and_api():
         # Create a dummy non-empty MP3 file
         (curator_engine.CURATOR_AUDIO_DIR / mp3_name).write_bytes(b"ID3" + b"\x00" * 1024)
 
+        # Include a legacy part4_connections record to verify backward compatibility doesn't crash API
         daily_doc = {
             "date": test_date,
             "generated_at": "2026-11-26T03:00:00+09:00",
             "shortfall_warning": None,
-            "parts_total": 1,
+            "parts_total": 2,
             "parts_ready": 1,
             "parts": [
                 {
@@ -287,10 +357,30 @@ def test_instant_enqueue_and_feedback_and_api():
                     "audio_filename": mp3_name,
                     "audio_status": "ready",
                     "audio_duration_sec": 720.0,
+                    "tts_engine": "voicepeak",
                     "enqueued": False,
                     "queue_item_id": None,
                     "feedback": None,
-                }
+                },
+                {
+                    "part_id": "part4_connections",
+                    "part_type": "connections",
+                    "part_label": "Part 4: Connections",
+                    "title": "過去ログ互換テスト",
+                    "why_selected": "旧フォーマットの互換確認",
+                    "source": {"source_name": "Legacy", "url": "", "access_type": "synthesis"},
+                    "scores": {},
+                    "weighted_score": None,
+                    "estimated_minutes": 3,
+                    "script_chars": 800,
+                    "script_text": "過去ログのテスト。",
+                    "audio_filename": f"{test_date}_part4_connections.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
             ],
         }
         (curator_engine.CURATOR_DIR / f"daily_{test_date}.json").write_text(
@@ -310,8 +400,11 @@ def test_instant_enqueue_and_feedback_and_api():
             r_daily = client.get(f"/api/curator/daily?date={test_date}")
             assert r_daily.status_code == 200
             assert r_daily.json()["daily"]["parts"][0]["part_id"] == "part1_core"
+            assert r_daily.json()["daily"]["parts"][0]["tts_engine"] == "voicepeak"
+            # Legacy part4 still returned cleanly
+            assert r_daily.json()["daily"]["parts"][1]["part_id"] == "part4_connections"
 
-            # Zero-wait instant enqueue
+            # Zero-wait instant enqueue (propagates tts_engine)
             r_enq = client.post(
                 "/api/curator/enqueue",
                 json={"date": test_date, "part_id": "part1_core"},
@@ -320,6 +413,7 @@ def test_instant_enqueue_and_feedback_and_api():
             enq_data = r_enq.json()
             assert enq_data["instant_ready"] is True
             assert enq_data["item"]["status"] == "ready"
+            assert enq_data["item"]["tts_engine"] == "voicepeak"
             assert (curator_engine.OUTPUT_DIR / f"{enq_data['item']['id']}.mp3").exists()
 
             # 5-level feedback + reason chips + memo
@@ -337,6 +431,7 @@ def test_instant_enqueue_and_feedback_and_api():
             fb_data = r_fb.json()
             assert fb_data["feedback"]["rating"] == 5
             assert "視点が新鮮" in fb_data["core_preference_summary"]
+            assert "意思決定の定量化が実務に効く" in fb_data["core_preference_summary"]
 
             # Verify persisted in history.json
             hist = curator_engine.load_history()
@@ -361,5 +456,7 @@ if __name__ == "__main__":
     test_slot_based_selection()
     test_wildcard_anti_overfitting()
     test_paywall_and_verification_filters()
+    test_katakana_sanitizer_and_prompts()
+    test_voicepeak_chunk_retry_and_engine_return()
     test_instant_enqueue_and_feedback_and_api()
     print("\n=== ALL CURATOR VERIFICATION TESTS PASSED ===")

@@ -247,7 +247,7 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
         txt_path.write_text(script_text, encoding="utf-8")
 
         # Step C: TTS
-        await poc_pipeline.generate_speech_async(script_text, mp3_path, voice=chosen_voice)
+        used_engine = await poc_pipeline.generate_speech_async(script_text, mp3_path, voice=chosen_voice)
 
         # Measure audio duration
         duration_sec = 0.0
@@ -269,11 +269,12 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
             title=title,
             summary=summary,
             audio_duration_sec=duration_sec,
+            tts_engine=used_engine,
             status="ready",
             error_message=None,
             page_count=page_count,
         )
-        print(f"[+] Task completed for {item_id}: {title} ({duration_sec}s, {page_count} pages)")
+        print(f"[+] Task completed for {item_id}: {title} ({duration_sec}s, {page_count} pages, engine={used_engine})")
 
     except Exception as e:
         print(f"[-] Processing failed for item {item_id}: {e}")
@@ -742,7 +743,7 @@ async def _synthesize_curator_queue_item(item_id: str, script_text: str):
     """Background TTS fallback when a curator part is enqueued before pre-synthesis finishes."""
     try:
         mp3_path = OUTPUT_DIR / f"{item_id}.mp3"
-        await poc_pipeline.generate_speech_async(script_text, mp3_path, voice=poc_pipeline.DEFAULT_VOICE)
+        used_engine = await poc_pipeline.generate_speech_async(script_text, mp3_path, voice=poc_pipeline.DEFAULT_VOICE)
         dur = 0.0
         try:
             dur = round(MP3(str(mp3_path)).info.length, 1)
@@ -751,6 +752,7 @@ async def _synthesize_curator_queue_item(item_id: str, script_text: str):
         queue_manager.update_item(
             item_id,
             audio_duration_sec=dur,
+            tts_engine=used_engine,
             status="ready",
             error_message=None,
         )
