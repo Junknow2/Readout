@@ -3,8 +3,8 @@
 Readout - Personal Knowledge Curator Engine
 Implements:
   - 3 independent discovery tracks (Core, Discovery, Wild Card — Wild Card structurally isolated from user preference profile)
-  - 7-axis weighted evaluation + slot-based selection (6 parts: Core×2, Discovery×2, Wild Card×2, not naive top-N)
-  - Independent 6-part, 7-step ear-friendly Japanese audio script generation (variable length, quality-first, strict katakana reading)
+  - 7-axis weighted evaluation + slot-based selection (9 parts: Core×3, Discovery×3, Wild Card×3, not naive top-N, strict Chapters 1-6 quality filtering)
+  - Independent 9-part, source-faithful calm Japanese audio narration script generation (no AI speculation/embellishment, no exaggeration, natural variable length, strict katakana reading)
   - Incremental VOICEPEAK pre-synthesis (each part published to daily_YYYY-MM-DD.json as soon as its MP3 is ready, with tts_engine tracking)
   - 14-day auto-cleanup of unadopted pre-synthesized MP3s (JSON, scripts, logs, history preserved permanently)
   - 5-level feedback learning loop updating Core-only preference summary
@@ -93,7 +93,7 @@ _CURATOR_STATUS: Dict[str, Any] = {
     "message": "待機中",
     "progress": 0,
     "parts_ready": 0,
-    "parts_total": 6,
+    "parts_total": 9,
     "started_at": None,
     "finished_at": None,
     "error": None,
@@ -301,6 +301,22 @@ def _format_candidates_for_prompt(candidates: List[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
+_EVAL_QUALITY_CRITERIA = """【高く評価すべき記事（良質な論考の基準）】
+- 「なぜその現象が起きるのか」という構造・メカニズムに踏み込んだ論考
+- 定説や通説を一次データ・フィールド実験・実証研究で検証した記事
+- 流行やブームの「その後」や実態を冷静に振り返った分析
+- 成功と失敗を分ける構造的な差異を明らかにした比較・事例研究
+- 常識や直感に反する発見、異分野の概念を結びつける独自の視座
+- 一過性の話題にとどまらず、数年後に聴き返しても価値が残る長期的な知見
+
+【厳しく減点すべき望ましくない記事（低評価ルール）】
+- 個別企業のレイオフ・人事交代・四半期決算・新商品発売・単なるニュース速報
+- 単なる AI ツールやサービスの機能紹介・表面的なハウツー記事
+- 「成功するリーダーの7つの習慣」系の一般論・薄いリスト記事・自己啓発
+- 根拠の薄いトレンド予測・当たり前の事実を大げさに語る表層記事・PR色の強い記事
+※上記に該当する記事は容赦なく低い点（特に `question_depth`、`originality`、`evidence_quality`、`long_term_value` を 1.0〜2.0 点以下）を付けること。"""
+
+
 def build_core_evaluation_prompt(
     candidates: List[Dict[str, Any]],
     core_preference_summary: str,
@@ -317,6 +333,8 @@ def build_core_evaluation_prompt(
 - 本枠は他枠（Discovery / Wild Card）とは完全に独立しています。他枠と共通テーマに無理やり寄せる必要は一切なく、この1枠単体で「経営者・マーケティングリサーチ／インサイト実務家としての知的好奇心・HBR的満足感」を最大化する最高品質の記事を高く評価してください。
 - 読者の過去の高評価テーマ・好まれた理由・メモの傾向に強く合致する記事は `interest_fit` を高く、逆に「既知だった」「抽象的すぎ」など低評価傾向に該当する記事は厳しめに評価してください。
 - 純粋に難解な学術アブストラクトだけの記事（Access: open_abstract）より、十分な本文と具体例・実証データ・実務的洞察を持つ良質な論考記事（Knowledge at Wharton, MIT SMR, Behavioral Scientist, The Conversation, Works in Progress, Our World in Data, Greenbook, Quirk's, RIETI 等の free_full_text）を優先的に高く評価してください。
+
+{_EVAL_QUALITY_CRITERIA}
 
 【評価軸（各0〜5点）】
 - question_depth (問いの深さ)
@@ -374,6 +392,8 @@ def build_discovery_evaluation_prompt(
 - 本枠は他枠（Core / Wild Card）と完全に独立しています。共通テーマに無理やり寄せる必要は一切なく、この1枠単体で「経営者・マーケティングリサーチ／インサイト実務家としての知的好奇心・HBR的満足感」と視野の広がりを最大化する記事を高く評価してください。
 - 純粋に難解な学術アブストラクトだけの記事（Access: open_abstract）より、十分な本文と具体例・実証データ・豊かなストーリーと洞察を持つ良質な論考記事（Knowledge at Wharton, MIT SMR, Behavioral Scientist, The Conversation, Works in Progress, Our World in Data, Greenbook, Quirk's, RIETI 等の free_full_text）を優先的に高く評価してください。
 
+{_EVAL_QUALITY_CRITERIA}
+
 【評価軸（各0〜5点）】
 question_depth, explanatory_power, evidence_quality, originality, long_term_value, curiosity, audio_suitability, interest_fit, novelty
 
@@ -419,6 +439,8 @@ def build_wildcard_evaluation_prompt(candidates: List[Dict[str, Any]]) -> str:
 【選定方針（重要）】
 - 他枠と共通テーマに寄せる必要は一切ありません。普段自分では探さない意外な領域の、独立した1本の良質な読み物として最も面白い記事を高く評価してください。
 - 短い学術アブストラクトだけ（Access: open_abstract）より、十分な本文と具体例・実証データ・魅力的な語り口を持つ良質な論考記事（Works in Progress, Our World in Data, The Conversation, Behavioral Scientist 等の free_full_text）を優先的に高く評価してください。
+
+{_EVAL_QUALITY_CRITERIA}
 
 【評価軸（各0〜5点）】
 question_depth, explanatory_power, evidence_quality, originality, long_term_value, curiosity, audio_suitability, novelty
@@ -565,16 +587,16 @@ def select_slots(
     min_weighted_score: float = MIN_SLOT_WEIGHTED_SCORE,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """
-    Slot-based selection for 6 daily parts (2 per track, NOT naive top-N by total weighted score):
-      - Core #1 / #2: balances weighted_score (65%) + interest_fit (35%)
-      - Discovery #1 / #2: balances weighted_score (65%) + novelty (35%)
-      - Wild Card #1 / #2: purely from wildcard_evaluated (preference-blind),
+    Slot-based selection for 9 daily parts (3 per track, NOT naive top-N by total weighted score):
+      - Core #1 / #2 / #3: balances weighted_score (65%) + interest_fit (35%)
+      - Discovery #1 / #2 / #3: balances weighted_score (65%) + novelty (35%)
+      - Wild Card #1 / #2 / #3: purely from wildcard_evaluated (preference-blind),
         balancing weighted_score (45%) + curiosity (30%) + originality (25%)
     Deduplication & quality rules:
       - Never selects the same normalized URL twice.
       - Excludes candidates with overlapping/same theme as already selected items.
       - Prefers distinct domains when alternatives exist.
-      - Does NOT pad with low-quality items (< min_weighted_score) or cross-track backfill for #2 slots.
+      - Does NOT pad with low-quality items (< min_weighted_score) or cross-track backfill for #2/#3 slots.
     """
     used_urls: Set[str] = set()
     used_titles: List[str] = []
@@ -655,70 +677,82 @@ def select_slots(
         prefer_new_domain=True,
     )
 
+    # Round 3: Pick #3 for each track strictly from its own evaluated pool (no artificial padding)
+    core_3 = _pick_best(
+        core_evaluated,
+        key_fn=core_key,
+        prefer_new_domain=True,
+    )
+    discovery_3 = _pick_best(
+        discovery_evaluated,
+        key_fn=disc_key,
+        prefer_new_domain=True,
+    )
+    wildcard_3 = _pick_best(
+        wildcard_evaluated,
+        key_fn=wc_key,
+        prefer_new_domain=True,
+    )
+
     return {
         "core_1": core_1,
         "core_2": core_2,
+        "core_3": core_3,
         "discovery_1": discovery_1,
         "discovery_2": discovery_2,
+        "discovery_3": discovery_3,
         "wildcard_1": wildcard_1,
         "wildcard_2": wildcard_2,
+        "wildcard_3": wildcard_3,
     }
 
 
-def _generate_part_script(
+def build_part_script_prompt(
     part_type: str,
     candidate: Dict[str, Any],
-) -> Dict[str, Any]:
+) -> str:
     """
-    Generate 7-step ear-friendly Japanese audio narration script for Core / Discovery / Wild Card.
-    Returns dict with title_ja, why_selected, script_text, estimated_minutes.
+    Build source-faithful, calm Japanese audio narration rewrite prompt.
+    Strictly prohibits AI-invented commentary, counterarguments, lessons, or exaggerated hype language.
     """
-    if part_type in ("core", "discovery"):
-        target_chars = "2,800〜4,200字（音声で約8〜12分）"
-        est_min = 10
-        role_label = "Core Deep Dive（主領域の深掘り解説）" if part_type == "core" else "Discovery Deep Dive（隣接領域からの新視点）"
-    else:
-        target_chars = "2,000〜2,800字（音声で約6〜8分）"
-        est_min = 7
-        role_label = "Wild Card（知的好奇心を刺激する意外な発見）"
-
     body_excerpt = (candidate.get("content") or "")[:16000]
     access_note = (
-        "※これは公開アブストラクト（研究概要）に基づく解説です。アブストラクトに記載のない数値や詳細は推測せず、『公開概要の範囲では』と明示し、背景知識や分析部分はAIの解説として明確に区別してください。"
+        "※これは公開アブストラクト（研究概要）に基づく記事です。アブストラクトに記載のない数値・詳細・背景知識やAI独自の解説は一切推測・追記せず、『公開概要の範囲では』と明示したうえで、記載されている内容のみを簡潔に伝えてください。"
         if candidate.get("access_type") == "open_abstract"
-        else "※記事の主張・データと、AIによる構造的分析・示唆を言葉の上で明確に区別してください。"
+        else "※元記事に書かれている問い・主張・根拠・データ・具体例・結論のみに厳密に基づき、記事にない背景補足・反論・教訓・評価を一切付け足さないでください。"
     )
 
-    prompt = f"""あなたは知的で明晰な音声解説ライターです。
-以下の実在記事（{role_label}）をもとに、歩行中や移動中に耳で聴いて深く理解できる日本語ナレーション原稿を執筆してください。
+    return f"""あなたは実在する海外・国内の論考記事を、耳で聴きやすい自然な日本語に忠実に翻訳・口語化する音声ナレーションライターです。
+以下の記事本文の内容を、過不足なく、落ち着いた知的な語り口の日本語ナレーション原稿（「です・ます」調）にまとめてください。
 
-【分量目安（質優先・可変尺）】
-{target_chars}
+【最重要方針：元記事への忠実性と落ち着いたトーン】
+1. **元記事に書かれている内容のみを伝える**:
+   - 元記事に含まれる「問い・主張・根拠・データ・具体例・結論」のみを忠実に翻訳・口語化してまとめてください。
+   - **AI 独自の解釈・意見・反論・教訓・当たり前の補足・結びの問いかけを一切追記しないでください。**
+   - 元記事にない数値・固有名詞・研究結果・背景事情を絶対に創作しないでください。
+2. **大げさな表現・誇張・煽り語の厳禁**:
+   - 「ここで革新的なことは」「画期的な」「パラダイムシフト」「驚くべきことに」「劇的な」「ゲームチェンジャー」「衝撃的な」などの誇張・煽り表現は一切使用しないでください。
+   - 元記事の論調を尊重し、静かで知的、かつ明晰な落ち着いたトーンで淡々と分かりやすく語ってください。
+3. **分量は元記事の情報量に応じて自然に決める**:
+   - 文字数を稼ぐための水増しや引き伸ばしは厳禁です。
+   - 目安として、元記事の要点・具体例・根拠を落とさず簡潔にまとめるため、通常 1,200〜2,800 字（音声で約 4〜8 分）程度になりますが、元記事が長大な論考なら長め、簡潔な記事なら短めに自然に伸縮させてください。
+4. **冒頭と結びの形式**:
+   - ラジオ風の挨拶（「こんにちは」「おはようございます」「今日も良い一日を」「〇〇の時間です」等）は一切入れないでください。
+   - 冒頭は必ず「{{媒体名カタカナ}}、『{{日本語タイトル}}』。」というシンプルな宣言から始め、即座に元記事の内容へ入ってください。
+   - 結びも応援やAI独自の問いかけは入れず、元記事の結論・まとめで静かに終えてください。
+5. **音声合成（VOICEPEAK）向けフォーマットと徹底カタカナ化（最重要）**:
+   - 表、図、URL、Markdown記号（#、*、-、・、`、~、|）、箇条書き記号は一切出力しないでください。句読点と自然な改行のみのプレーンテキストにしてください。
+   - 音声合成エンジンがアルファベット表記をたどたどしく読むのを防ぐため、`script_text` 本文中の英単語・アルファベット略語・英語の媒体名・企業名・人名・専門用語は、**すべて耳で聴いて自然な日本語カタカナ読みに変換して出力し、アルファベットを本文に一切残さないでください**。
+     - 変換例: AI → エーアイ、ROI → アールオーアイ、KPI → ケーピーアイ、LLM → エルエルエム、MIT → エムアイティー、Harvard Business Review → ハーバード・ビジネス・レビュー、Works in Progress → ワークス・イン・プログレス、Nature → ネイチャー、P&G → ピーアンドジー、PANAS → パナス、Deep Dive → ディープダイブ。
+6. {access_note}
 
-【必須の7ステップ構成（見出し記号は使わず自然な語り口で順番に展開すること）】
-1. なぜこの問いが面白いか（導入・知的フック）
-2. 通説・歴史（従来の見方や背景）
-3. 重要主張（本記事・研究の核心的なテーゼ）
-4. 具体例・データ・証拠（本文に基づく具体的な根拠）
-5. 反論・限界（前提の制約、異論、適用限界）
-6. 示唆（意思決定・視点・実務や思考への応用）
-7. さらに考えたい問い（聴き終えた後に残る深い問い）
-
-【厳守ルール】
-- ラジオ風の挨拶（「こんにちは」「今日も良い一日を」「〇〇の時間です」等）は一切入れないこと。
-- 表、図、URL、Markdown記号（#、*、-、・、`、~、|）、箇条書き記号は一切出力しないこと。句読点と自然な改行のみのプレーンテキストにすること。
-- **英単語・アルファベットの徹底カタカナ化（最重要）**: 音声合成エンジンがアルファベット表記の英単語をたどたどしく読むのを防ぐため、`script_text` 本文中の英単語・アルファベット略語・英語の媒体名・企業名・人名・専門用語は、**すべて耳で聴いて自然な日本語カタカナ読みに変換して出力し、アルファベットを本文に一切残さないこと**。
-  - 変換例: AI → エーアイ、ROI → アールオーアイ、KPI → ケーピーアイ、LLM → エルエルエム、MIT → エムアイティー、Harvard Business Review → ハーバード・ビジネス・レビュー、Works in Progress → ワークス・イン・プログレス、Nature → ネイチャー、P&G → ピーアンドジー、PANAS → パナス、Deep Dive → ディープダイブ。
-- 著作権に配慮し、原文の直訳や丸写しではなく、構造を噛み砕いた独自の日本語解説にすること。
-- 元記事にない数値・固有名詞・研究結果を創作しないこと。
-- {access_note}
-- 出力は必ず以下の JSON オブジェクトのみとすること。
+出力は必ず以下の JSON オブジェクトのみとしてください（解説文不要）。
 
 出力フォーマット:
 {{
-  "title_ja": "日本語の知的で簡潔なタイトル（30〜50字）",
-  "why_selected": "この記事を選んだ理由と聴きどころ（80〜140字）",
-  "script_text": "7ステップ構成のプレーンテキスト音声原稿..."
+  "title_ja": "元記事の内容を正確に表す簡潔な日本語タイトル（30〜50字）",
+  "why_selected": "この記事が扱う問いと要点を端的に示す紹介文（80〜140字・誇張表現なし）",
+  "script_text": "「媒体名カタカナ、『日本語タイトル』。」から始まる元記事忠実なプレーンテキスト音声原稿..."
 }}
 
 【記事メタデータ】
@@ -732,7 +766,18 @@ def _generate_part_script(
 {body_excerpt}
 """
 
-    raw = _call_gemini_text(prompt, temperature=0.6, max_output_tokens=8192)
+
+def _generate_part_script(
+    part_type: str,
+    candidate: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Generate source-faithful, calm ear-friendly Japanese audio narration script for Core / Discovery / Wild Card.
+    Returns dict with title_ja, why_selected, script_text, estimated_minutes.
+    """
+    prompt = build_part_script_prompt(part_type, candidate)
+
+    raw = _call_gemini_text(prompt, temperature=0.4, max_output_tokens=8192)
     try:
         parsed = _extract_json_block(raw)
         title_ja = (parsed.get("title_ja") or candidate.get("title") or "無題").strip()
@@ -743,7 +788,7 @@ def _generate_part_script(
         why_selected = candidate.get("eval_reason") or ""
         script_text = sanitize_curator_script(raw)
 
-    est_minutes = max(2, round(len(script_text) / 330)) if script_text else est_min
+    est_minutes = max(1, round(len(script_text) / 330)) if script_text else 6
     return {
         "title_ja": title_ja,
         "why_selected": why_selected,
@@ -828,8 +873,8 @@ async def run_daily_curation(
       1. Cleanup unadopted MP3s older than 14 days
       2. Crawl & strictly verify candidates (RSS, OpenAlex, J-STAGE, Gemini Grounding)
       3. Run 3 independent evaluations (Core, Discovery, Wild Card — Wild Card isolated from preferences)
-      4. Slot-based selection (6 independent parts: Core×2, Discovery×2, Wild Card×2)
-      5. Generate 7-step Japanese audio scripts & immediately persist daily JSON, scripts txt, research log
+      4. Slot-based selection (9 independent parts: Core×3, Discovery×3, Wild Card×3)
+      5. Generate source-faithful Japanese audio scripts & immediately persist daily JSON, scripts txt, research log
       6. Incrementally synthesize VOICEPEAK MP3s part-by-part, updating daily_YYYY-MM-DD.json after EACH part!
     """
     ensure_dirs()
@@ -845,7 +890,7 @@ async def run_daily_curation(
         message="古い未採用音声を整理中...",
         progress=5,
         parts_ready=0,
-        parts_total=6,
+        parts_total=9,
         started_at=datetime.now(JST).isoformat(),
         finished_at=None,
         error=None,
@@ -888,15 +933,15 @@ async def run_daily_curation(
         disc_bucket = [c for c in verified if c.get("track_hint") == "discovery"]
         wc_bucket = [c for c in verified if c.get("track_hint") == "wildcard"]
 
-        # Ensure each track has sufficient candidates to evaluate for 2 picks per track
-        if len(core_bucket) < 6:
-            extras = [c for c in verified if c not in core_bucket][: 6 - len(core_bucket)]
+        # Ensure each track has sufficient candidates to evaluate for 3 picks per track
+        if len(core_bucket) < 8:
+            extras = [c for c in verified if c not in core_bucket][: 8 - len(core_bucket)]
             core_bucket = core_bucket + extras
-        if len(disc_bucket) < 6:
-            extras = [c for c in verified if c not in disc_bucket][: 6 - len(disc_bucket)]
+        if len(disc_bucket) < 8:
+            extras = [c for c in verified if c not in disc_bucket][: 8 - len(disc_bucket)]
             disc_bucket = disc_bucket + extras
-        if len(wc_bucket) < 6:
-            extras = [c for c in verified if c not in wc_bucket][: 6 - len(wc_bucket)]
+        if len(wc_bucket) < 8:
+            extras = [c for c in verified if c not in wc_bucket][: 8 - len(wc_bucket)]
             wc_bucket = wc_bucket + extras
 
         # Phase 2: 3 independent 7-axis evaluations
@@ -906,12 +951,12 @@ async def run_daily_curation(
             progress=35,
         )
         core_eval, disc_eval, wc_eval = await asyncio.gather(
-            asyncio.to_thread(_evaluate_track, core_bucket[:14], "core", core_pref),
-            asyncio.to_thread(_evaluate_track, disc_bucket[:14], "discovery", core_pref),
-            asyncio.to_thread(_evaluate_track, wc_bucket[:14], "wildcard", ""),
+            asyncio.to_thread(_evaluate_track, core_bucket[:16], "core", core_pref),
+            asyncio.to_thread(_evaluate_track, disc_bucket[:16], "discovery", core_pref),
+            asyncio.to_thread(_evaluate_track, wc_bucket[:16], "wildcard", ""),
         )
 
-        # Phase 3: Slot-based selection (6 parts: Core×2, Discovery×2, Wild Card×2)
+        # Phase 3: Slot-based selection (9 parts: Core×3, Discovery×3, Wild Card×3)
         selected = select_slots(core_eval, disc_eval, wc_eval)
         selected_urls = {
             curator_sources.normalize_url(c["url"]): slot
@@ -919,10 +964,10 @@ async def run_daily_curation(
             if c and c.get("url")
         }
 
-        # Phase 4: Generate independent 6-part 7-step scripts
+        # Phase 4: Generate independent 9-part source-faithful scripts
         _update_status(
             phase="scripting",
-            message="6パート（Core×2 / Discovery×2 / Wild Card×2・7ステップ構成）の音声解説原稿を生成中...",
+            message="9パート（Core×3 / Discovery×3 / Wild Card×3・元記事忠実リライト）の音声原稿を生成中...",
             progress=55,
         )
 
@@ -930,10 +975,13 @@ async def run_daily_curation(
         slot_meta = [
             ("part1_core_1", "core_1", "core", "Core #1: Core Deep Dive"),
             ("part1_core_2", "core_2", "core", "Core #2: Core Deep Dive"),
+            ("part1_core_3", "core_3", "core", "Core #3: Core Deep Dive"),
             ("part2_discovery_1", "discovery_1", "discovery", "Discovery #1: Discovery Deep Dive"),
             ("part2_discovery_2", "discovery_2", "discovery", "Discovery #2: Discovery Deep Dive"),
+            ("part2_discovery_3", "discovery_3", "discovery", "Discovery #3: Discovery Deep Dive"),
             ("part3_wildcard_1", "wildcard_1", "wildcard", "Wild Card #1: Wild Card"),
             ("part3_wildcard_2", "wildcard_2", "wildcard", "Wild Card #2: Wild Card"),
+            ("part3_wildcard_3", "wildcard_3", "wildcard", "Wild Card #3: Wild Card"),
         ]
         for part_id, slot_key, part_type, part_label in slot_meta:
             cand = selected.get(slot_key)
@@ -1039,9 +1087,9 @@ async def run_daily_curation(
         shortfall_msgs: List[str] = []
         if crawl_stats.get("shortfall_warning"):
             shortfall_msgs.append(str(crawl_stats["shortfall_warning"]))
-        if len(parts) < 6:
+        if len(parts) < 9:
             shortfall_msgs.append(
-                f"良質な候補が不足したため、目標 6 本に対し {len(parts)} 本のみの選出となりました（不足分は水増しせず見送り）。"
+                f"良質な候補が不足したため、目標 9 本に対し {len(parts)} 本のみの選出となりました（不足分は水増しせず見送り）。"
             )
         combined_shortfall = " ".join(shortfall_msgs) if shortfall_msgs else None
 

@@ -1408,7 +1408,7 @@
 
     curatorDailyList.innerHTML = '';
 
-    // Compact daily lineup summary bar (supports both 6-part and legacy 3-part JSON)
+    // Compact daily lineup summary bar (supports 9-part, 6-part, and legacy 3-part JSON)
     const parts = curatorDaily.parts;
     const totalCount = parts.length;
     const readyCount = parts.filter((p) => p.audio_status === 'ready').length;

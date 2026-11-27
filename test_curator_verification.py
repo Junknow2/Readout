@@ -57,11 +57,12 @@ def test_seven_axis_weighted_score():
 
 
 def test_slot_based_selection():
-    print("[Test 2] 6-part slot-based selection (Core×2, Discovery×2, Wild Card×2, dedup & no padding)...")
+    print("[Test 2] 9-part slot-based selection (Core×3, Discovery×3, Wild Card×3, dedup & no padding)...")
     # Core pool:
-    # - "Core Fit Winner #1": lower weighted_score (4.2) but max interest_fit (5.0) -> wins core_1 over "General High Score"
-    # - "Core Fit Duplicate Theme": same topic as core_1 -> must be skipped for core_2
-    # - "Core Fit Winner #2": distinct topic & domain -> wins core_2
+    # - "Pricing Strategy Field Experiments in Retail": lower weighted_score (4.2) but max interest_fit (5.0) -> wins core_1
+    # - "Retail Pricing Strategy Field Experiments Revisited": same topic as core_1 -> must be skipped
+    # - "Organizational Incentive Design Across Multinationals": distinct topic & domain -> wins core_2
+    # - "General High Score Operations": distinct topic & domain -> wins core_3
     core_pool = [
         {
             "title": "General High Score Operations",
@@ -160,18 +161,21 @@ def test_slot_based_selection():
     ]
 
     selected = curator_engine.select_slots(core_pool, disc_pool, wc_pool)
-    assert len(selected) == 6
+    assert len(selected) == 9
     assert selected["core_1"]["title"] == "Pricing Strategy Field Experiments in Retail"
-    # Duplicate-theme article must be skipped; distinct Core #2 wins
+    # Duplicate-theme article must be skipped; distinct Core #2 and Core #3 win
     assert selected["core_2"]["title"] == "Organizational Incentive Design Across Multinationals"
+    assert selected["core_3"]["title"] == "General High Score Operations"
     assert selected["discovery_1"]["title"] == "Collective Intelligence in Urban Transit Networks"
     assert selected["discovery_2"]["title"] == "Behavioral Economics of Preventive Healthcare"
+    assert selected["discovery_3"]["title"] == "Boring Familiar Survey"
     assert selected["wildcard_1"]["title"] == "Why Ancient Polynesians Mapped Ocean Swells"
     assert selected["wildcard_2"]["title"] == "How Mycelium Networks Balance Forest Nutrients"
+    assert selected["wildcard_3"]["title"] == "Dry Academic Baseline"
 
-    # All 6 selected URLs must be strictly unique
+    # All 9 selected URLs must be strictly unique
     urls = [curator_sources.normalize_url(v["url"]) for v in selected.values() if v]
-    assert len(urls) == 6 and len(set(urls)) == 6, f"Duplicate URLs found: {urls}"
+    assert len(urls) == 9 and len(set(urls)) == 9, f"Duplicate URLs found: {urls}"
 
     # Shortage & no artificial padding test: only 1 good Wild Card + 1 low-quality (<2.5) candidate
     short_wc_pool = [
@@ -189,6 +193,7 @@ def test_slot_based_selection():
     short_sel = curator_engine.select_slots(core_pool, disc_pool, short_wc_pool)
     assert short_sel["wildcard_1"]["title"] == "Why Ancient Polynesians Mapped Ocean Swells"
     assert short_sel["wildcard_2"] is None, "Low-quality candidate should not be padded into wildcard_2"
+    assert short_sel["wildcard_3"] is None, "Shortage should not be padded into wildcard_3"
     print("  PASS")
 
 
@@ -310,9 +315,45 @@ def test_katakana_sanitizer_and_prompts():
     safe_word = poc_pipeline.sanitize_script_for_tts("EMAIL と MAIN はそのまま")
     assert "EMAIL" in safe_word and "MAIN" in safe_word, f"Word boundary broken: {safe_word}"
 
-    # Verify katakana instruction exists in Web/PDF rewrite prompts
-    assert "カタカナ" in poc_pipeline.PODCAST_REWRITE_PROMPT
-    assert "カタカナ" in poc_pipeline.PDF_REWRITE_PROMPT
+    # Verify katakana instruction, faithful tone & no-exaggeration rules in Web/PDF rewrite prompts
+    for prompt_text in (poc_pipeline.PODCAST_REWRITE_PROMPT, poc_pipeline.PDF_REWRITE_PROMPT):
+        assert "カタカナ" in prompt_text
+        assert "革新的な" in prompt_text and "画期的な" in prompt_text
+        assert "追記しないでください" in prompt_text
+
+    # Verify Curator script prompt: 7-step & inflated char target removed, source-faithful & calm tone enforced
+    sample_cand = {
+        "title": "Why Organizations Misread Incentives",
+        "source_name": "Knowledge at Wharton",
+        "author": "Test Author",
+        "published_at": "2026-11-25",
+        "access_type": "free_full_text",
+        "content": "Empirical study body text about organizational incentives." * 20,
+    }
+    script_prompt = curator_engine.build_part_script_prompt("core", sample_cand)
+    for forbidden in ("7ステップ", "2,800〜4,200字", "さらに考えたい問い", "AIによる構造的分析"):
+        assert forbidden not in script_prompt, f"Legacy inflated instruction remained: {forbidden}"
+    for required in (
+        "カタカナ",
+        "媒体名カタカナ",
+        "日本語タイトル",
+        "革新的な",
+        "画期的な",
+        "パラダイムシフト",
+        "ゲームチェンジャー",
+        "一切追記しないでください",
+        "1,200〜2,800",
+    ):
+        assert required in script_prompt, f"Missing required faithful-script rule: {required}"
+
+    # Verify Chapters 1-6 strict evaluation criteria in all 3 track prompts
+    for eval_prompt in (
+        curator_engine.build_core_evaluation_prompt([sample_cand], "test pref"),
+        curator_engine.build_discovery_evaluation_prompt([sample_cand], "test pref"),
+        curator_engine.build_wildcard_evaluation_prompt([sample_cand]),
+    ):
+        for kw in ("レイオフ", "四半期決算", "7つの習慣", "定説", "数年後", "question_depth", "evidence_quality"):
+            assert kw in eval_prompt, f"Missing Ch1-6 evaluation criterion '{kw}'"
 
     # Verify Part 4 Connections generator is removed
     assert not hasattr(curator_engine, "_generate_connections_script"), "_generate_connections_script should be removed"
@@ -364,7 +405,7 @@ def test_voicepeak_chunk_retry_and_engine_return():
 
 
 def test_instant_enqueue_and_feedback_and_api():
-    print("[Test 7 & 8] 6-part structure, legacy 3-part/part4 compat, instant 0s enqueue (tts_engine), feedback+memo, Matrix Note, FastAPI...")
+    print("[Test 7 & 8] 9-part structure, legacy 3-part/part4 compat, instant 0s enqueue (tts_engine), feedback+memo, Matrix Note, FastAPI...")
     tmp_dir = Path(tempfile.mkdtemp(prefix="readout_curator_test_"))
     try:
         orig_c_dir = curator_engine.CURATOR_DIR
@@ -384,16 +425,16 @@ def test_instant_enqueue_and_feedback_and_api():
         main.OUTPUT_DIR = tmp_dir / "output"
         curator_engine.ensure_dirs()
 
-        # A. New 6-part daily JSON (2026-11-26)
+        # A. New 9-part daily JSON (2026-11-26)
         test_date = "2026-11-26"
         mp3_name = f"{test_date}_part1_core_1.mp3"
         (curator_engine.CURATOR_AUDIO_DIR / mp3_name).write_bytes(b"ID3" + b"\x00" * 1024)
 
-        six_part_doc = {
+        nine_part_doc = {
             "date": test_date,
             "generated_at": "2026-11-26T03:00:00+09:00",
             "shortfall_warning": None,
-            "parts_total": 6,
+            "parts_total": 9,
             "parts_ready": 1,
             "parts": [
                 {
@@ -415,12 +456,12 @@ def test_instant_enqueue_and_feedback_and_api():
                     "weighted_score": 4.5,
                     "interest_fit": 4.8,
                     "novelty": 4.0,
-                    "estimated_minutes": 10,
-                    "script_chars": 3400,
+                    "estimated_minutes": 6,
+                    "script_chars": 2100,
                     "script_text": "これはテスト用の音声解説原稿です。",
                     "audio_filename": mp3_name,
                     "audio_status": "ready",
-                    "audio_duration_sec": 600.0,
+                    "audio_duration_sec": 360.0,
                     "tts_engine": "voicepeak",
                     "enqueued": False,
                     "queue_item_id": None,
@@ -437,10 +478,32 @@ def test_instant_enqueue_and_feedback_and_api():
                     "weighted_score": 4.3,
                     "interest_fit": 4.6,
                     "novelty": 3.8,
-                    "estimated_minutes": 10,
-                    "script_chars": 3300,
+                    "estimated_minutes": 6,
+                    "script_chars": 2000,
                     "script_text": "テスト原稿2。",
                     "audio_filename": f"{test_date}_part1_core_2.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part1_core_3",
+                    "part_type": "core",
+                    "part_label": "Core #3: Core Deep Dive",
+                    "title": "組織内インセンティブ設計と長期成果の関係",
+                    "why_selected": "長期パネルデータによる実証分析",
+                    "source": {"source_name": "RIETI", "url": "https://www.rieti.go.jp/test-3/", "access_type": "free_full_text"},
+                    "scores": {k: 4.2 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.2,
+                    "interest_fit": 4.4,
+                    "novelty": 3.9,
+                    "estimated_minutes": 5,
+                    "script_chars": 1800,
+                    "script_text": "テスト原稿3。",
+                    "audio_filename": f"{test_date}_part1_core_3.mp3",
                     "audio_status": "script_only",
                     "audio_duration_sec": 0.0,
                     "tts_engine": None,
@@ -454,14 +517,14 @@ def test_instant_enqueue_and_feedback_and_api():
                     "part_label": "Discovery #1: Discovery Deep Dive",
                     "title": "都市交通と集合知の創発メカニズム",
                     "why_selected": "隣接領域からの新鮮な視点",
-                    "source": {"source_name": "Works in Progress", "url": "https://worksinprogress.co/test-3/", "access_type": "free_full_text"},
+                    "source": {"source_name": "Works in Progress", "url": "https://worksinprogress.co/test-4/", "access_type": "free_full_text"},
                     "scores": {k: 4.2 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
                     "weighted_score": 4.2,
                     "interest_fit": 3.8,
                     "novelty": 4.8,
-                    "estimated_minutes": 10,
-                    "script_chars": 3200,
-                    "script_text": "テスト原稿3。",
+                    "estimated_minutes": 6,
+                    "script_chars": 2000,
+                    "script_text": "テスト原稿4。",
                     "audio_filename": f"{test_date}_part2_discovery_1.mp3",
                     "audio_status": "script_only",
                     "audio_duration_sec": 0.0,
@@ -476,15 +539,37 @@ def test_instant_enqueue_and_feedback_and_api():
                     "part_label": "Discovery #2: Discovery Deep Dive",
                     "title": "行動経済学で解き明かす予防医療の設計",
                     "why_selected": "行動科学の応用事例",
-                    "source": {"source_name": "Behavioral Scientist", "url": "https://behavioralscientist.org/test-4/", "access_type": "free_full_text"},
+                    "source": {"source_name": "Behavioral Scientist", "url": "https://behavioralscientist.org/test-5/", "access_type": "free_full_text"},
                     "scores": {k: 4.1 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
                     "weighted_score": 4.1,
                     "interest_fit": 3.6,
                     "novelty": 4.5,
-                    "estimated_minutes": 9,
-                    "script_chars": 3000,
-                    "script_text": "テスト原稿4。",
+                    "estimated_minutes": 5,
+                    "script_chars": 1700,
+                    "script_text": "テスト原稿5。",
                     "audio_filename": f"{test_date}_part2_discovery_2.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part2_discovery_3",
+                    "part_type": "discovery",
+                    "part_label": "Discovery #3: Discovery Deep Dive",
+                    "title": "社会制度の変化と長期生産性の実証検証",
+                    "why_selected": "歴史的データに基づく構造比較",
+                    "source": {"source_name": "Our World in Data", "url": "https://ourworldindata.org/test-6/", "access_type": "free_full_text"},
+                    "scores": {k: 4.0 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.0,
+                    "interest_fit": 3.5,
+                    "novelty": 4.4,
+                    "estimated_minutes": 5,
+                    "script_chars": 1650,
+                    "script_text": "テスト原稿6。",
+                    "audio_filename": f"{test_date}_part2_discovery_3.mp3",
                     "audio_status": "script_only",
                     "audio_duration_sec": 0.0,
                     "tts_engine": None,
@@ -498,14 +583,14 @@ def test_instant_enqueue_and_feedback_and_api():
                     "part_label": "Wild Card #1: Wild Card",
                     "title": "古代ポリネシアの波浪航法と空間認知",
                     "why_selected": "意外性と知的好奇心",
-                    "source": {"source_name": "The Conversation", "url": "https://theconversation.com/test-5/", "access_type": "free_full_text"},
+                    "source": {"source_name": "The Conversation", "url": "https://theconversation.com/test-7/", "access_type": "free_full_text"},
                     "scores": {k: 4.2 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
                     "weighted_score": 4.2,
                     "interest_fit": 0.0,
                     "novelty": 5.0,
-                    "estimated_minutes": 7,
-                    "script_chars": 2400,
-                    "script_text": "テスト原稿5。",
+                    "estimated_minutes": 5,
+                    "script_chars": 1600,
+                    "script_text": "テスト原稿7。",
                     "audio_filename": f"{test_date}_part3_wildcard_1.mp3",
                     "audio_status": "script_only",
                     "audio_duration_sec": 0.0,
@@ -519,16 +604,38 @@ def test_instant_enqueue_and_feedback_and_api():
                     "part_type": "wildcard",
                     "part_label": "Wild Card #2: Wild Card",
                     "title": "菌根ネットワークが森の栄養循環を調整する仕組み",
-                    "why_selected": "生態系の驚くべき構造",
-                    "source": {"source_name": "Our World in Data", "url": "https://ourworldindata.org/test-6/", "access_type": "free_full_text"},
+                    "why_selected": "生態系の構造的メカニズム",
+                    "source": {"source_name": "Our World in Data", "url": "https://ourworldindata.org/test-8/", "access_type": "free_full_text"},
                     "scores": {k: 4.1 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
                     "weighted_score": 4.1,
                     "interest_fit": 0.0,
                     "novelty": 4.9,
-                    "estimated_minutes": 7,
-                    "script_chars": 2300,
-                    "script_text": "テスト原稿6。",
+                    "estimated_minutes": 5,
+                    "script_chars": 1550,
+                    "script_text": "テスト原稿8。",
                     "audio_filename": f"{test_date}_part3_wildcard_2.mp3",
+                    "audio_status": "script_only",
+                    "audio_duration_sec": 0.0,
+                    "tts_engine": None,
+                    "enqueued": False,
+                    "queue_item_id": None,
+                    "feedback": None,
+                },
+                {
+                    "part_id": "part3_wildcard_3",
+                    "part_type": "wildcard",
+                    "part_label": "Wild Card #3: Wild Card",
+                    "title": "中世の計量標準統一が商業圏を広げた過程",
+                    "why_selected": "歴史的制度設計の知的好奇心",
+                    "source": {"source_name": "Works in Progress", "url": "https://worksinprogress.co/test-9/", "access_type": "free_full_text"},
+                    "scores": {k: 4.0 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                    "weighted_score": 4.0,
+                    "interest_fit": 0.0,
+                    "novelty": 4.8,
+                    "estimated_minutes": 5,
+                    "script_chars": 1500,
+                    "script_text": "テスト原稿9。",
+                    "audio_filename": f"{test_date}_part3_wildcard_3.mp3",
                     "audio_status": "script_only",
                     "audio_duration_sec": 0.0,
                     "tts_engine": None,
@@ -539,7 +646,7 @@ def test_instant_enqueue_and_feedback_and_api():
             ],
         }
         (curator_engine.CURATOR_DIR / f"daily_{test_date}.json").write_text(
-            json.dumps(six_part_doc, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(nine_part_doc, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
         # B. Legacy 3-part + part4_connections JSON (2026-11-25) for backward compatibility
@@ -614,18 +721,21 @@ def test_instant_enqueue_and_feedback_and_api():
             assert test_date in r_dates.json()["dates"]
             assert legacy_date in r_dates.json()["dates"]
 
-            # Verify 6-part daily response
+            # Verify 9-part daily response
             r_daily = client.get(f"/api/curator/daily?date={test_date}")
             assert r_daily.status_code == 200
             parts_resp = r_daily.json()["daily"]["parts"]
-            assert len(parts_resp) == 6
+            assert len(parts_resp) == 9
             assert [p["part_id"] for p in parts_resp] == [
                 "part1_core_1",
                 "part1_core_2",
+                "part1_core_3",
                 "part2_discovery_1",
                 "part2_discovery_2",
+                "part2_discovery_3",
                 "part3_wildcard_1",
                 "part3_wildcard_2",
+                "part3_wildcard_3",
             ]
             assert parts_resp[0]["tts_engine"] == "voicepeak"
 
