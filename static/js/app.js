@@ -14,12 +14,8 @@
   const speeds = [1.0, 1.25, 1.5, 2.0];
   let currentSpeedIdx = 0;
 
-  // RSS State
+  // Tab State
   let activeTab = 'queue';
-  let feeds = [];
-  let articles = [];
-  let isLoadingArticles = false;
-  let feedManagerOpen = false;
 
   // Curator State
   let curatorDates = [];
@@ -48,10 +44,10 @@
   // Tabs DOM
   const tabBtnQueue = document.getElementById('tab-btn-queue');
   const tabBtnCurator = document.getElementById('tab-btn-curator');
-  const tabBtnRss = document.getElementById('tab-btn-rss');
+  const tabBtnAdd = document.getElementById('tab-btn-add');
   const paneQueue = document.getElementById('pane-queue');
   const paneCurator = document.getElementById('pane-curator');
-  const paneRss = document.getElementById('pane-rss');
+  const paneAdd = document.getElementById('pane-add');
 
   // Curator DOM
   const curatorDateSelect = document.getElementById('curator-date-select');
@@ -96,18 +92,6 @@
   const btnSeekForward = document.getElementById('btn-seek-forward');
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
-
-  // RSS View DOM
-  const feedManagerToggle = document.getElementById('feed-manager-toggle');
-  const feedManagerArrow = document.getElementById('feed-manager-arrow');
-  const feedManagerBody = document.getElementById('feed-manager-body');
-  const feedUrlInput = document.getElementById('feed-url-input');
-  const btnAddFeed = document.getElementById('btn-add-feed');
-  const feedChips = document.getElementById('feed-chips');
-  const feedCount = document.getElementById('feed-count');
-  const articlesCounter = document.getElementById('articles-counter');
-  const btnRefreshArticles = document.getElementById('btn-refresh-articles');
-  const articlesList = document.getElementById('articles-list');
 
   // -------------------------------------------------------------
   // PWA Service Worker Registration & Offline Detection
@@ -183,7 +167,7 @@
   }
 
   // -------------------------------------------------------------
-  // Tab Switcher (3 tabs: queue | curator | rss)
+  // Tab Switcher (3 tabs: queue | curator | add)
   // -------------------------------------------------------------
   function switchTab(target) {
     if (target === activeTab) return;
@@ -192,7 +176,7 @@
     const tabs = [
       { key: 'queue', btn: tabBtnQueue, pane: paneQueue },
       { key: 'curator', btn: tabBtnCurator, pane: paneCurator },
-      { key: 'rss', btn: tabBtnRss, pane: paneRss },
+      { key: 'add', btn: tabBtnAdd, pane: paneAdd },
     ];
     tabs.forEach(({ key, btn, pane }) => {
       if (!btn || !pane) return;
@@ -209,15 +193,12 @@
       } else {
         fetchCuratorStatus();
       }
-    } else if (target === 'rss') {
-      if (feeds.length === 0) fetchFeeds();
-      if (articles.length === 0) fetchArticles();
     }
   }
 
   tabBtnQueue.addEventListener('click', () => switchTab('queue'));
   if (tabBtnCurator) tabBtnCurator.addEventListener('click', () => switchTab('curator'));
-  tabBtnRss.addEventListener('click', () => switchTab('rss'));
+  if (tabBtnAdd) tabBtnAdd.addEventListener('click', () => switchTab('add'));
 
   // -------------------------------------------------------------
   // Cache Verification & Auto Pre-caching
@@ -225,7 +206,7 @@
   async function checkOfflineCache() {
     if (!('caches' in window)) return;
     try {
-      const cache = await caches.open('readout-v7');
+      const cache = await caches.open('readout-v9');
       for (const item of queue) {
         if (item.has_audio !== false && !item.audio_deleted && item.status === 'ready' && item.audio_filename) {
           const audioUrl = `/audio/${item.audio_filename}`;
@@ -287,7 +268,6 @@
       renderQueue();
       if (queueFilter === 'unread') {
         checkOfflineCache();
-        syncArticlesQueueState();
       }
 
       // If nothing is loaded yet and we are on unread queue, set up the first ready item
@@ -316,6 +296,10 @@
       }
       urlInput.value = '';
       showToast('キューに追加しました。音声を生成しています...');
+      if (queueFilter !== 'unread') {
+        switchQueueFilter('unread');
+      }
+      switchTab('queue');
       await fetchQueue();
     } catch (err) {
       alert(`エラー: ${err.message}`);
@@ -347,6 +331,10 @@
 
       showToast(`✅ 「${file.name}」をキューに追加しました。Gemini解析中...`);
       if (pdfFileInput) pdfFileInput.value = '';
+      if (queueFilter !== 'unread') {
+        switchQueueFilter('unread');
+      }
+      switchTab('queue');
       await fetchQueue();
     } catch (err) {
       alert(`PDFアップロードエラー: ${err.message}`);
@@ -491,7 +479,7 @@
     currentTrackId = null;
     audio.src = '';
     playerTitle.textContent = '再生待ちのアイテムがありません';
-    playerSummary.textContent = 'URLを追加すると、Geminiがポッドキャスト風にリライトして高音質音声化します。';
+    playerSummary.textContent = '「追加」タブや Curator から記事・PDFを追加すると、AI音声化してここで再生できます。';
     trackStatusTag.textContent = 'IDLE';
     timeCurrent.textContent = '0:00';
     timeDuration.textContent = '0:00';
@@ -654,7 +642,7 @@
         queueList.innerHTML = `
           <div class="queue-empty">
             <p class="queue-empty-title">未読キューは空です</p>
-            <p>上の入力欄に読みたい記事のURLを入れるか、Curator / RSS から追加してください。</p>
+            <p>「📥 追加」タブからURLやPDFを登録するか、Curator から追加してください。</p>
           </div>
         `;
       }
@@ -825,257 +813,6 @@
 
       queueList.appendChild(card);
     });
-  }
-
-  // -------------------------------------------------------------
-  // RSS Feeds Management
-  // -------------------------------------------------------------
-  feedManagerToggle.addEventListener('click', () => {
-    feedManagerOpen = !feedManagerOpen;
-    feedManagerBody.style.display = feedManagerOpen ? 'flex' : 'none';
-    feedManagerArrow.classList.toggle('open', feedManagerOpen);
-  });
-
-  async function fetchFeeds() {
-    try {
-      const res = await fetch('/api/feeds');
-      if (!res.ok) throw new Error('Failed to fetch feeds');
-      feeds = await res.json();
-      renderFeeds();
-    } catch (err) {
-      console.warn('Error fetching feeds:', err);
-    }
-  }
-
-  function renderFeeds() {
-    feedCount.textContent = `${feeds.length}`;
-    feedChips.innerHTML = '';
-
-    if (feeds.length === 0) {
-      feedChips.innerHTML = '<span style="font-size: 0.8rem; color: #666;">購読フィードがありません</span>';
-      return;
-    }
-
-    feeds.forEach((feed) => {
-      const chip = document.createElement('div');
-      chip.className = 'feed-chip';
-      chip.innerHTML = `
-        <span class="feed-chip-title" title="${escapeHtml(feed.url)}">${escapeHtml(feed.title)}</span>
-        <button class="feed-chip-delete" data-id="${feed.id}" title="購読解除">×</button>
-      `;
-
-      const btnDeleteFeed = chip.querySelector('.feed-chip-delete');
-      btnDeleteFeed.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (confirm(`「${feed.title}」の購読を解除しますか？`)) {
-          await deleteFeed(feed.id);
-        }
-      });
-
-      feedChips.appendChild(chip);
-    });
-  }
-
-  async function addFeed(url) {
-    try {
-      showToast('フィードを登録中...');
-      const res = await fetch('/api/feeds', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url })
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'フィード登録に失敗しました');
-      }
-      feedUrlInput.value = '';
-      showToast('フィードを購読しました！');
-      await fetchFeeds();
-      await fetchArticles();
-    } catch (err) {
-      alert(`エラー: ${err.message}`);
-    }
-  }
-
-  async function deleteFeed(feedId) {
-    try {
-      const res = await fetch(`/api/feeds/${feedId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('フィード削除に失敗しました');
-      showToast('購読を解除しました');
-      await fetchFeeds();
-      await fetchArticles();
-    } catch (err) {
-      alert(`エラー: ${err.message}`);
-    }
-  }
-
-  btnAddFeed.addEventListener('click', () => {
-    const url = feedUrlInput.value.trim();
-    if (url) {
-      addFeed(url);
-    } else {
-      showToast('フィードURLを入力してください');
-    }
-  });
-
-  feedUrlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const url = feedUrlInput.value.trim();
-      if (url) addFeed(url);
-    }
-  });
-
-  // -------------------------------------------------------------
-  // RSS Articles Timeline & 1-Tap Enqueue
-  // -------------------------------------------------------------
-  async function fetchArticles() {
-    if (isLoadingArticles) return;
-    isLoadingArticles = true;
-    btnRefreshArticles.classList.add('spinning');
-    articlesList.innerHTML = `
-      <div class="articles-loading">
-        <div class="spinner"></div>
-        <p>最新記事をタイムラインに集約中...</p>
-      </div>
-    `;
-
-    try {
-      const res = await fetch('/api/articles');
-      if (!res.ok) throw new Error('Failed to fetch articles');
-      articles = await res.json();
-      renderArticles();
-    } catch (err) {
-      console.error('Error fetching articles:', err);
-      articlesList.innerHTML = `
-        <div class="articles-empty">
-          <p style="color: var(--accent-danger);">新着記事の取得に失敗しました</p>
-          <button class="btn-icon-refresh" id="btn-retry-articles">再試行</button>
-        </div>
-      `;
-      const retryBtn = document.getElementById('btn-retry-articles');
-      if (retryBtn) retryBtn.addEventListener('click', fetchArticles);
-    } finally {
-      isLoadingArticles = false;
-      btnRefreshArticles.classList.remove('spinning');
-    }
-  }
-
-  btnRefreshArticles.addEventListener('click', fetchArticles);
-
-  function syncArticlesQueueState() {
-    if (articles.length === 0) return;
-    const queuedUrls = new Set(queue.map(it => (it.url || '').trim().replace(/\/$/, '')));
-
-    let hasChange = false;
-    articles.forEach(art => {
-      const cleanLink = (art.link || '').trim().replace(/\/$/, '');
-      const isQueued = queuedUrls.has(cleanLink);
-      if (art.in_queue !== isQueued) {
-        art.in_queue = isQueued;
-        hasChange = true;
-      }
-    });
-
-    if (hasChange && activeTab === 'rss') {
-      renderArticles();
-    }
-  }
-
-  function renderArticles() {
-    articlesCounter.textContent = `${articles.length} 件`;
-
-    if (articles.length === 0) {
-      articlesList.innerHTML = `
-        <div class="articles-empty">
-          <p>新着記事がありません。</p>
-          <p style="font-size: 0.85rem;">フィード管理からお好みのテックRSS/Atomを追加してください。</p>
-        </div>
-      `;
-      return;
-    }
-
-    articlesList.innerHTML = '';
-    articles.forEach((art) => {
-      const card = document.createElement('div');
-      card.className = `article-card ${art.in_queue ? 'in-queue' : ''}`;
-
-      const btnHtml = art.in_queue
-        ? `<button class="btn-enqueue state-queued" disabled>
-             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-             ✓ キュー追加済
-           </button>`
-        : `<button class="btn-enqueue" data-action="enqueue">
-             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
-             🎧 走るリストに追加
-           </button>`;
-
-      card.innerHTML = `
-        <div class="article-header">
-          <span class="article-feed-badge" title="${escapeHtml(art.feed_title)}">${escapeHtml(art.feed_title)}</span>
-          <span class="article-date">${escapeHtml(art.published)}</span>
-        </div>
-        <h3 class="article-title">${escapeHtml(art.title)}</h3>
-        <p class="article-summary">${escapeHtml(art.summary || 'サマリーはありません')}</p>
-        <div class="article-actions">
-          ${btnHtml}
-          <a href="${escapeHtml(art.link)}" target="_blank" rel="noopener" class="article-link">
-            🔗 元記事を読む
-          </a>
-        </div>
-      `;
-
-      const enqueueBtn = card.querySelector('[data-action="enqueue"]');
-      if (enqueueBtn) {
-        enqueueBtn.addEventListener('click', () => {
-          handleEnqueueArticle(art, enqueueBtn, card);
-        });
-      }
-
-      articlesList.appendChild(card);
-    });
-  }
-
-  async function handleEnqueueArticle(art, btn, card) {
-    if (art.in_queue) return;
-
-    btn.disabled = true;
-    btn.className = 'btn-enqueue state-loading';
-    btn.innerHTML = `
-      <span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;"></span>
-      <span>⏳ 生成中...</span>
-    `;
-
-    try {
-      const res = await fetch('/api/queue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: art.link })
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'キュー追加に失敗しました');
-      }
-
-      art.in_queue = true;
-      card.classList.add('in-queue');
-      btn.className = 'btn-enqueue state-queued';
-      btn.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-        <span>✓ キュー追加済</span>
-      `;
-
-      showToast('走るリストに追加しました！音声を生成しています...');
-      await fetchQueue();
-    } catch (err) {
-      alert(`エラー: ${err.message}`);
-      btn.disabled = false;
-      btn.className = 'btn-enqueue';
-      btn.innerHTML = `
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
-        <span>🎧 走るリストに追加</span>
-      `;
-    }
   }
 
   // -------------------------------------------------------------

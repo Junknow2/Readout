@@ -22,7 +22,6 @@ from pydantic import BaseModel, HttpUrl
 
 import poc_pipeline
 import queue_manager
-import feed_manager
 import curator_engine
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -192,10 +191,6 @@ class AddQueueRequest(BaseModel):
     model: Optional[str] = None
 
 
-class AddFeedRequest(BaseModel):
-    url: str
-
-
 class CuratorRunRequest(BaseModel):
     date: Optional[str] = None
     synthesize_audio: bool = True
@@ -356,7 +351,6 @@ async def process_item_task(item_id: str, voice: Optional[str] = None, model: Op
 @app.on_event("startup")
 def startup_event():
     queue_manager.ensure_dirs()
-    feed_manager.ensure_dirs()
     curator_engine.ensure_dirs()
     try:
         queue_manager.cleanup_listened_audio(retention_days=7)
@@ -867,48 +861,6 @@ async def delete_queue_item(item_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"success": True, "id": item_id}
-
-
-# --- RSS Feed & Article Endpoints ---
-
-@app.get("/api/feeds")
-async def get_feeds():
-    """List all subscribed RSS/Atom feeds."""
-    return feed_manager.get_feeds()
-
-
-@app.post("/api/feeds")
-async def add_feed(payload: AddFeedRequest):
-    """Subscribe to a new RSS/Atom feed."""
-    url = str(payload.url).strip()
-    if not url.startswith("http://") and not url.startswith("https://"):
-        raise HTTPException(status_code=400, detail="Invalid URL scheme. Must start with http:// or https://")
-    try:
-        feed = feed_manager.add_feed(url)
-        return feed
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse feed: {e}")
-
-
-@app.delete("/api/feeds/{feed_id}")
-async def delete_feed(feed_id: str):
-    """Unsubscribe from a feed."""
-    success = feed_manager.delete_feed(feed_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Feed not found")
-    return {"success": True, "id": feed_id}
-
-
-@app.get("/api/articles")
-async def get_articles(limit: int = 40):
-    """Get aggregated timeline of latest articles from all subscribed feeds."""
-    try:
-        articles = feed_manager.fetch_all_articles(max_articles=limit)
-        return articles
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch articles: {e}")
 
 
 # --- Personal Knowledge Curator Endpoints ---

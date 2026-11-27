@@ -1,4 +1,4 @@
-const CACHE_NAME = 'readout-v7';
+const CACHE_NAME = 'readout-v9';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -100,7 +100,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. API requests: Never cache non-GET or Curator/Feeds/Articles APIs
+  // 2. API requests: Never cache non-GET or Curator APIs
   if (event.request.method !== 'GET') {
     return;
   }

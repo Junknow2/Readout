@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="/static/css/style.css?v=7">
+  <link rel="stylesheet" href="/static/css/style.css?v=9">
 </head>
 <body>
   <div class="app-container">
@@ -48,54 +48,21 @@
         <span class="tab-icon">✨</span>
         <span class="tab-label">Curator</span>
       </button>
-      <button id="tab-btn-rss" class="tab-btn" role="tab" aria-selected="false" data-tab="rss">
-        <span class="tab-icon">📡</span>
-        <span class="tab-label">RSS</span>
+      <button id="tab-btn-add" class="tab-btn" role="tab" aria-selected="false" data-tab="add">
+        <span class="tab-icon">📥</span>
+        <span class="tab-label">追加 (URL/PDF)</span>
       </button>
     </nav>
 
     <!-- TAB 1: Running Queue & High-Contrast Player -->
     <div id="pane-queue" class="tab-pane active" role="tabpanel">
-      <!-- URL Input Quick Card -->
-      <section class="url-form-card">
-        <input type="url" id="url-input" class="url-input" placeholder="記事のURLをペーストして追加..." autocomplete="off">
-        <button id="btn-add-url" class="btn-add">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          追加
-        </button>
-      </section>
-      <div class="quick-tip-row">
-        <span>🔖 ブラウザ閲覧中の記事を1クリック登録:</span>
-        <button id="btn-bookmarklet-tip" class="link-btn-text">ブックマークレットを使う</button>
-      </div>
-
-      <!-- PDF Dropzone & Upload Card -->
-      <section class="pdf-upload-card" id="pdf-dropzone">
-        <input type="file" id="pdf-file-input" accept="application/pdf,.pdf" style="display: none;">
-        <div class="pdf-upload-content" id="pdf-upload-trigger">
-          <div class="pdf-upload-icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="12" y1="18" x2="12" y2="12"></line>
-              <polyline points="9 15 12 12 15 15"></polyline>
-            </svg>
-          </div>
-          <div class="pdf-upload-text-wrap">
-            <span class="pdf-upload-main">📁 PDFファイルをアップロード</span>
-            <span class="pdf-upload-sub">ドラッグ＆ドロップ または タップして選択（論文・資料をAI音声化）</span>
-          </div>
-          <button type="button" class="btn-pdf-browse" id="btn-pdf-browse">ファイル選択</button>
-        </div>
-      </section>
-
       <!-- Main High-Contrast Player -->
       <section class="player-card">
         <div class="player-header">
           <div class="track-info">
             <span class="track-tag" id="track-status-tag">NOW PLAYING</span>
             <h1 class="track-title" id="player-title">再生待ちのアイテムがありません</h1>
-            <p class="track-summary" id="player-summary">URLを追加すると、Geminiがポッドキャスト風にリライトして高音質音声化します。</p>
+            <p class="track-summary" id="player-summary">「追加」タブや Curator から記事・PDFを追加すると、AI音声化してここで再生できます。</p>
           </div>
           <button id="btn-speed" class="btn-speed">1.0x</button>
         </div>
@@ -159,7 +126,7 @@
         <div id="queue-list" class="queue-list">
           <div class="queue-empty">
             <p class="queue-empty-title">キューは空です</p>
-            <p>上の入力欄に読みたい記事のURLを入れるか、RSSリーダーから追加してください。</p>
+            <p>「📥 追加」タブからURLやPDFを登録するか、Curator から追加してください。</p>
           </div>
         </div>
       </section>
@@ -221,50 +188,50 @@
       </div>
     </div>
 
-    <!-- TAB 3: Built-in RSS Reader & Timeline -->
-    <div id="pane-rss" class="tab-pane" role="tabpanel" style="display: none;">
-      <!-- Collapsible Feed Manager -->
-      <section class="feed-manager-card">
-        <div class="feed-manager-header" id="feed-manager-toggle">
-          <div class="feed-manager-title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
-            <span>購読フィード管理 (<span id="feed-count">0</span>)</span>
-          </div>
-          <span class="toggle-arrow" id="feed-manager-arrow">▼</span>
+    <!-- TAB 3: Add Content (PDF Upload & URL Form) -->
+    <div id="pane-add" class="tab-pane" role="tabpanel" style="display: none;">
+      <!-- Primary: PDF Upload Hero Card -->
+      <section class="add-section-card">
+        <div class="add-section-header">
+          <h2 class="add-section-title">📄 PDF ファイルを音声化</h2>
+          <p class="add-section-desc">学術論文・レポート・調査資料などの PDF を Gemini が構造理解して日本語ナレーション音声に変換します。</p>
         </div>
-
-        <div class="feed-manager-body" id="feed-manager-body">
-          <div class="feed-add-form">
-            <input type="url" id="feed-url-input" class="feed-input" placeholder="RSS/Atom フィードURLを追加..." autocomplete="off">
-            <button id="btn-add-feed" class="btn-feed-add">登録</button>
-          </div>
-          <div class="feed-chips-wrap">
-            <div class="feed-chips-label">購読中のフィード:</div>
-            <div class="feed-chips" id="feed-chips">
-              <!-- Rendered by app.js -->
+        <div class="pdf-upload-card" id="pdf-dropzone">
+          <input type="file" id="pdf-file-input" accept="application/pdf,.pdf" style="display: none;">
+          <div class="pdf-upload-content" id="pdf-upload-trigger">
+            <div class="pdf-upload-icon-wrap">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="12" y1="18" x2="12" y2="12"></line>
+                <polyline points="9 15 12 12 15 15"></polyline>
+              </svg>
             </div>
+            <div class="pdf-upload-text-wrap">
+              <span class="pdf-upload-main">PDF をドラッグ＆ドロップ</span>
+              <span class="pdf-upload-sub">またはタップして端末からファイルを選択（最大 50MB）</span>
+            </div>
+            <button type="button" class="btn-pdf-browse" id="btn-pdf-browse">📁 ファイルを選択</button>
           </div>
         </div>
       </section>
 
-      <!-- RSS Articles Timeline -->
-      <section class="rss-timeline-section">
-        <div class="section-header">
-          <div class="title-with-badge">
-            <h2 class="section-title">新着記事タイムライン</h2>
-            <span id="articles-counter" class="queue-count">0 件</span>
-          </div>
-          <button id="btn-refresh-articles" class="btn-icon-refresh" title="新着記事を再取得">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            <span>更新</span>
+      <!-- Secondary: Web Article / PDF URL Direct Input -->
+      <section class="add-section-card">
+        <div class="add-section-header">
+          <h2 class="add-section-title">🔗 Web 記事 / PDF URL を直接追加</h2>
+          <p class="add-section-desc">ブログ記事・ニュース・PDF 直リンクの URL をペーストして再生キューへ投入します。</p>
+        </div>
+        <div class="url-form-card">
+          <input type="url" id="url-input" class="url-input" placeholder="https://example.com/article または .pdf" autocomplete="off">
+          <button id="btn-add-url" class="btn-add">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            追加
           </button>
         </div>
-
-        <div id="articles-list" class="articles-list">
-          <div class="articles-loading">
-            <div class="spinner"></div>
-            <p>新着記事を読み込み中...</p>
-          </div>
+        <div class="quick-tip-row">
+          <span>🔖 PCブラウザ閲覧中の記事を1クリック登録:</span>
+          <button id="btn-bookmarklet-tip" class="link-btn-text">ブックマークレットを使う</button>
         </div>
       </section>
     </div>
@@ -318,6 +285,6 @@
   <div id="toast" class="toast">メッセージ</div>
 
   <!-- Scripts -->
-  <script src="/static/js/app.js?v=8"></script>
+  <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>
