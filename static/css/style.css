@@ -1010,6 +1010,7 @@ body {
   font-size: 0.85rem;
   font-weight: 700;
   outline: none;
+  max-width: 100%;
 }
 
 .curator-date-select:focus {
@@ -1028,6 +1029,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
   transition: transform 0.12s ease, opacity 0.2s ease;
 }
 

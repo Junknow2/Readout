@@ -828,6 +828,276 @@ def test_instant_enqueue_and_feedback_and_api():
     print("  PASS")
 
 
+def test_append_set_manual_extra_run():
+    print("[Test 9] Manual append_set (_set2/_set3), non-destructive preservation, dedup, API & cleanup...")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="readout_curator_set2_test_"))
+    try:
+        orig_c_dir = curator_engine.CURATOR_DIR
+        orig_ca_dir = curator_engine.CURATOR_AUDIO_DIR
+        orig_h_file = curator_engine.HISTORY_FILE
+        orig_out_dir = curator_engine.OUTPUT_DIR
+        orig_q_file = queue_manager.QUEUE_FILE
+        orig_q_out = queue_manager.OUTPUT_DIR
+        orig_main_out = main.OUTPUT_DIR
+        orig_u, orig_p = main.READOUT_USERNAME, main.READOUT_PASSWORD
+
+        curator_engine.CURATOR_DIR = tmp_dir / "curator"
+        curator_engine.CURATOR_AUDIO_DIR = curator_engine.CURATOR_DIR / "audio"
+        curator_engine.HISTORY_FILE = curator_engine.CURATOR_DIR / "history.json"
+        curator_engine.OUTPUT_DIR = tmp_dir / "output"
+        queue_manager.QUEUE_FILE = tmp_dir / "queue.json"
+        queue_manager.OUTPUT_DIR = tmp_dir / "output"
+        main.OUTPUT_DIR = tmp_dir / "output"
+        main.READOUT_USERNAME, main.READOUT_PASSWORD = None, None
+        curator_engine.ensure_dirs()
+
+        try:
+            day = "2026-11-28"
+            # When no set exists yet, resolve_next_set_key(append_set=True) returns YYYY-MM-DD
+            assert curator_engine.resolve_next_set_key(day, append_set=True) == day
+
+            # Create existing Set 1 (daily_2026-11-28.json)
+            set1_url = "https://set1.example.com/article-1"
+            set1_doc = {
+                "date": day,
+                "generated_at": f"{day}T03:00:00+09:00",
+                "shortfall_warning": None,
+                "parts_total": 1,
+                "parts_ready": 1,
+                "parts": [
+                    {
+                        "part_id": "part1_core_1",
+                        "part_type": "core",
+                        "part_label": "Core #1: Core Deep Dive",
+                        "title": "定期バッチSet1の元記事タイトル",
+                        "why_selected": "Set1の推薦理由",
+                        "source": {
+                            "original_title": "Original Set One Pricing Strategy",
+                            "source_name": "Knowledge at Wharton",
+                            "url": set1_url,
+                            "access_type": "free_full_text",
+                        },
+                        "scores": {k: 4.5 for k in curator_engine.SEVEN_AXIS_WEIGHTS},
+                        "weighted_score": 4.5,
+                        "estimated_minutes": 5,
+                        "script_chars": 1500,
+                        "script_text": "Set1の原稿。",
+                        "audio_filename": f"{day}_part1_core_1.mp3",
+                        "audio_status": "ready",
+                        "audio_duration_sec": 300.0,
+                        "tts_engine": "voicepeak",
+                        "enqueued": False,
+                        "queue_item_id": None,
+                        "feedback": None,
+                    }
+                ],
+            }
+            set1_path = curator_engine.CURATOR_DIR / f"daily_{day}.json"
+            set1_path.write_text(json.dumps(set1_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # Now resolve_next_set_key(append_set=True) MUST return YYYY-MM-DD_set2
+            assert curator_engine.resolve_next_set_key(day, append_set=True) == f"{day}_set2"
+            # While append_set=False keeps YYYY-MM-DD
+            assert curator_engine.resolve_next_set_key(day, append_set=False) == day
+
+            # Run append_set=True pipeline with mocked crawl/eval/script/tts
+            captured_seen_urls = set()
+
+            def fake_collect(seen_urls, seen_titles, core_pref, enable_grounding):
+                captured_seen_urls.update(seen_urls)
+                # Return Set1's URL (should be filtered out by select_slots safety net too) + 3 fresh candidates
+                cands = [
+                    {
+                        "title": "Original Set One Pricing Strategy",
+                        "url": set1_url,
+                        "domain": "set1.example.com",
+                        "source_name": "Knowledge at Wharton",
+                        "access_type": "free_full_text",
+                        "track_hint": "core",
+                        "content": "Set 1 duplicate body " * 80,
+                        "content_length": 1600,
+                    },
+                    {
+                        "title": "Fresh Core Supply Chain Resilience Study",
+                        "url": "https://fresh1.example.com/core",
+                        "domain": "fresh1.example.com",
+                        "source_name": "MIT SMR",
+                        "access_type": "free_full_text",
+                        "track_hint": "core",
+                        "content": "Fresh core content " * 80,
+                        "content_length": 1600,
+                    },
+                    {
+                        "title": "Fresh Discovery Behavioral Nudge Experiment",
+                        "url": "https://fresh2.example.com/disc",
+                        "domain": "fresh2.example.com",
+                        "source_name": "Behavioral Scientist",
+                        "access_type": "free_full_text",
+                        "track_hint": "discovery",
+                        "content": "Fresh discovery content " * 80,
+                        "content_length": 1600,
+                    },
+                    {
+                        "title": "Fresh Wildcard Deep Sea Hydrothermal Ecology",
+                        "url": "https://fresh3.example.com/wc",
+                        "domain": "fresh3.example.com",
+                        "source_name": "Works in Progress",
+                        "access_type": "free_full_text",
+                        "track_hint": "wildcard",
+                        "content": "Fresh wildcard content " * 80,
+                        "content_length": 1600,
+                    },
+                ]
+                return {
+                    "verified": cands,
+                    "rejected": [],
+                    "new_sources_discovered": [],
+                    "stats": {"raw_collected": 4, "verified_count": 4, "rejected_count": 0},
+                }
+
+            def fake_eval(cands, track, pref=""):
+                out = []
+                for c in cands:
+                    item = dict(c)
+                    item["eval_track"] = track
+                    item["scores"] = {k: 4.4 for k in curator_engine.SEVEN_AXIS_WEIGHTS}
+                    item["weighted_score"] = 4.4
+                    item["interest_fit"] = 4.5 if track != "wildcard" else 0.0
+                    item["novelty"] = 4.5
+                    item["eval_reason"] = "テスト評価"
+                    out.append(item)
+                return out
+
+            def fake_script(part_type, cand):
+                return {
+                    "title_ja": f"日本語: {cand['title']}",
+                    "why_selected": "追加セットの良記事",
+                    "script_text": f"テスト原稿: {cand['title']}",
+                    "estimated_minutes": 5,
+                }
+
+            async def fake_tts(text, out_mp3, voice=None):
+                Path(out_mp3).write_bytes(b"ID3" + b"\x00" * 1024)
+                return "voicepeak"
+
+            with (
+                patch.object(curator_sources, "collect_and_verify_candidates", side_effect=fake_collect),
+                patch.object(curator_engine, "_evaluate_track", side_effect=fake_eval),
+                patch.object(curator_engine, "_generate_part_script", side_effect=fake_script),
+                patch.object(poc_pipeline, "generate_speech_async", side_effect=fake_tts),
+            ):
+                set2_doc = asyncio.run(
+                    curator_engine.run_daily_curation(
+                        date_str=day,
+                        synthesize_audio=True,
+                        enable_grounding=False,
+                        append_set=True,
+                    )
+                )
+
+            set2_key = f"{day}_set2"
+            assert set2_doc["date"] == set2_key, f"Expected {set2_key}, got {set2_doc['date']}"
+            # Set 1 URL was passed in seen_urls AND excluded from Set 2 parts
+            assert curator_sources.normalize_url(set1_url) in captured_seen_urls
+            set2_urls = [p["source"]["url"] for p in set2_doc["parts"]]
+            assert set1_url not in set2_urls, "Set 1 URL leaked into Set 2!"
+            assert len(set2_doc["parts"]) == 3
+
+            # Set 1 file must remain completely untouched
+            reloaded_set1 = json.loads(set1_path.read_text(encoding="utf-8"))
+            assert reloaded_set1["parts"][0]["title"] == "定期バッチSet1の元記事タイトル"
+
+            # Set 2 files must all exist
+            assert (curator_engine.CURATOR_DIR / f"daily_{set2_key}.json").exists()
+            assert (curator_engine.CURATOR_DIR / f"scripts_{set2_key}.txt").exists()
+            assert (curator_engine.CURATOR_DIR / f"research_log_{set2_key}.json").exists()
+            assert (curator_engine.CURATOR_AUDIO_DIR / f"{set2_key}_part1_core_1.mp3").exists()
+
+            # Next append_set resolves to _set3
+            assert curator_engine.resolve_next_set_key(day, append_set=True) == f"{day}_set3"
+
+            # list_available_dates / list_curated_dates ordering: _set2 before YYYY-MM-DD
+            dates = curator_engine.list_available_dates()
+            assert dates == [set2_key, day], f"Unexpected date ordering: {dates}"
+
+            # load_daily & load_research_log work with _set2
+            ld_key, ld_doc, ld_rlog = curator_engine.load_daily(set2_key)
+            assert ld_key == set2_key and ld_doc is not None and ld_rlog is not None
+            assert curator_engine.load_research_log(set2_key) is not None
+
+            # Enqueue, feedback, Matrix Note on _set2 via FastAPI
+            client = TestClient(main.app)
+            r_enq = client.post(
+                "/api/curator/enqueue",
+                json={"date": set2_key, "part_id": "part1_core_1"},
+            )
+            assert r_enq.status_code == 200 and r_enq.json()["instant_ready"] is True
+
+            r_fb = client.post(
+                "/api/curator/feedback",
+                json={
+                    "date": set2_key,
+                    "part_id": "part1_core_1",
+                    "rating": 5,
+                    "reasons": ["視点が新鮮"],
+                    "memo": "追加セット2が良かった",
+                },
+            )
+            assert r_fb.status_code == 200 and r_fb.json()["feedback"]["date"] == set2_key
+
+            with patch.object(main, "_post_to_matrix_note", return_value={"note": {"id": "note-set2"}}):
+                r_mx = client.post(
+                    "/api/curator/send-to-matrix-note",
+                    json={"date": set2_key, "part_id": "part1_core_1"},
+                )
+                assert r_mx.status_code == 200 and r_mx.json()["date"] == set2_key
+
+            # POST /api/curator/run defaults to append_set=True and returns _set3
+            with patch.object(main, "_run_curator_bg", return_value=None):
+                r_run = client.post("/api/curator/run", json={"date": day, "synthesize_audio": True})
+                assert r_run.status_code == 200
+                run_json = r_run.json()
+                assert run_json["started"] is True
+                assert run_json["date"] == f"{day}_set3"
+
+            # cleanup_old_unadopted_audio must clean up old _set2 unadopted MP3s too
+            old_set2 = "2020-01-01_set2"
+            old_mp3 = f"{old_set2}_part1_core_1.mp3"
+            (curator_engine.CURATOR_AUDIO_DIR / old_mp3).write_bytes(b"ID3" + b"\x00" * 256)
+            (curator_engine.CURATOR_DIR / f"daily_{old_set2}.json").write_text(
+                json.dumps(
+                    {
+                        "date": old_set2,
+                        "parts": [
+                            {
+                                "part_id": "part1_core_1",
+                                "audio_filename": old_mp3,
+                                "audio_status": "ready",
+                                "enqueued": False,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            deleted = curator_engine.cleanup_old_unadopted_audio(days=14)
+            assert old_mp3 in deleted, f"Expected {old_mp3} to be cleaned up, got {deleted}"
+            assert not (curator_engine.CURATOR_AUDIO_DIR / old_mp3).exists()
+        finally:
+            main.READOUT_USERNAME, main.READOUT_PASSWORD = orig_u, orig_p
+            curator_engine.CURATOR_DIR = orig_c_dir
+            curator_engine.CURATOR_AUDIO_DIR = orig_ca_dir
+            curator_engine.HISTORY_FILE = orig_h_file
+            curator_engine.OUTPUT_DIR = orig_out_dir
+            queue_manager.QUEUE_FILE = orig_q_file
+            queue_manager.OUTPUT_DIR = orig_q_out
+            main.OUTPUT_DIR = orig_main_out
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    print("  PASS")
+
+
 if __name__ == "__main__":
     test_seven_axis_weighted_score()
     test_slot_based_selection()
@@ -836,4 +1106,5 @@ if __name__ == "__main__":
     test_katakana_sanitizer_and_prompts()
     test_voicepeak_chunk_retry_and_engine_return()
     test_instant_enqueue_and_feedback_and_api()
+    test_append_set_manual_extra_run()
     print("\n=== ALL CURATOR VERIFICATION TESTS PASSED ===")

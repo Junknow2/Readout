@@ -20,6 +20,7 @@
   // Curator State
   let curatorDates = [];
   let curatorSelectedDate = '';
+  let curatorPendingRunDate = '';
   let curatorDaily = null;
   let curatorResearchLog = null;
   let curatorStatus = null;
@@ -206,7 +207,7 @@
   async function checkOfflineCache() {
     if (!('caches' in window)) return;
     try {
-      const cache = await caches.open('readout-v9');
+      const cache = await caches.open('readout-v10');
       for (const item of queue) {
         if (item.has_audio !== false && !item.audio_deleted && item.status === 'ready' && item.audio_filename) {
           const audioUrl = `/audio/${item.audio_filename}`;
@@ -1032,6 +1033,15 @@
     });
   }
 
+  function formatCuratorDateLabel(dateKey) {
+    if (!dateKey) return '';
+    const m = String(dateKey).match(/^(\d{4}-\d{2}-\d{2})_set(\d+)$/);
+    if (m) {
+      return `${m[1]}（追加 #${m[2]}）`;
+    }
+    return dateKey;
+  }
+
   if (btnCuratorRun) {
     btnCuratorRun.addEventListener('click', async () => {
       try {
@@ -1039,9 +1049,18 @@
         const res = await fetch('/api/curator/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ synthesize_audio: true }),
+          body: JSON.stringify({ synthesize_audio: true, append_set: true }),
         });
         const data = await res.json();
+        if (data.started && data.date) {
+          curatorPendingRunDate = data.date;
+          renderCuratorStatusBanner({
+            running: true,
+            date: data.date,
+            message: data.message || `${formatCuratorDateLabel(data.date)} を生成中...`,
+            progress: 5,
+          });
+        }
         showToast(data.message || 'キュレーションを開始しました');
         await fetchCuratorStatus();
       } catch (err) {
@@ -1071,14 +1090,22 @@
       if (!res.ok) return;
       const prevRunning = curatorStatus && curatorStatus.running;
       const prevReady = curatorStatus ? curatorStatus.parts_ready : 0;
+      const prevPhase = curatorStatus ? curatorStatus.phase : '';
       curatorStatus = await res.json();
+      if (curatorStatus.running && curatorStatus.date) {
+        curatorPendingRunDate = curatorStatus.date;
+      }
       renderCuratorStatusBanner(curatorStatus);
-      // Refresh daily selection incrementally whenever a new part finishes audio or run completes
-      if (
-        (curatorStatus.running && curatorStatus.parts_ready !== prevReady) ||
-        (prevRunning && !curatorStatus.running)
-      ) {
-        await fetchCuratorDaily(curatorSelectedDate || '');
+      // Refresh daily selection incrementally whenever scripts are persisted, a new part finishes audio, or run completes
+      const justCompleted = prevRunning && !curatorStatus.running;
+      const newPartReady = curatorStatus.running && curatorStatus.parts_ready !== prevReady;
+      const enteredSynth = curatorStatus.running && prevPhase !== 'synthesizing' && curatorStatus.phase === 'synthesizing';
+      if (newPartReady || enteredSynth || justCompleted) {
+        const targetDate = curatorPendingRunDate || curatorStatus.date || curatorSelectedDate || '';
+        await fetchCuratorDaily(targetDate);
+        if (justCompleted) {
+          curatorPendingRunDate = '';
+        }
       }
     } catch (e) {
       console.warn('Curator status fetch error:', e);
@@ -1113,7 +1140,7 @@
       return;
     }
     curatorDateSelect.innerHTML = curatorDates
-      .map((d) => `<option value="${escapeHtml(d)}" ${d === curatorSelectedDate ? 'selected' : ''}>${escapeHtml(d)}</option>`)
+      .map((d) => `<option value="${escapeHtml(d)}" ${d === curatorSelectedDate ? 'selected' : ''}>${escapeHtml(formatCuratorDateLabel(d))}</option>`)
       .join('');
   }
 
@@ -1137,7 +1164,7 @@
       curatorDailyList.innerHTML = `
         <div class="queue-empty">
           <p class="queue-empty-title">キュレーション結果がありません</p>
-          <p>「今すぐ実行」を押すか、毎日 03:00 の自動生成をお待ちください。</p>
+          <p>「⚡ もう1セット追加」を押すか、毎日 03:00 の自動生成をお待ちください。</p>
         </div>
       `;
       return;

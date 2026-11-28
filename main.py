@@ -194,6 +194,7 @@ class AddQueueRequest(BaseModel):
 class CuratorRunRequest(BaseModel):
     date: Optional[str] = None
     synthesize_audio: bool = True
+    append_set: bool = True
 
 
 class CuratorEnqueueRequest(BaseModel):
@@ -886,11 +887,12 @@ async def _synthesize_curator_queue_item(item_id: str, script_text: str):
         queue_manager.update_item(item_id, status="failed", error_message=str(e))
 
 
-async def _run_curator_bg(date_str: Optional[str], synthesize_audio: bool):
+async def _run_curator_bg(date_str: Optional[str], synthesize_audio: bool, append_set: bool = False):
     try:
         await curator_engine.run_daily_curation(
             date_str=date_str,
             synthesize_audio=synthesize_audio,
+            append_set=append_set,
         )
     except Exception as e:
         print(f"[-] Background curator run failed: {e}")
@@ -926,17 +928,28 @@ async def trigger_curator_run(
     background_tasks: BackgroundTasks,
     payload: Optional[CuratorRunRequest] = None,
 ):
-    """Trigger manual curation run in background."""
+    """Trigger manual curation run in background (defaults to append_set=True so existing daily sets are never overwritten)."""
     status = curator_engine.get_status()
     if status.get("running"):
         return {"started": False, "message": "すでにキュレーションを実行中です。", "status": status}
-    target_date = payload.date if payload else None
+    req_date = payload.date if payload else None
     synth = payload.synthesize_audio if payload else True
-    background_tasks.add_task(_run_curator_bg, target_date, synth)
+    append_set = payload.append_set if payload else True
+    resolved_date = curator_engine.resolve_next_set_key(req_date, append_set=append_set)
+    # Pass already-resolved set_key with append_set=False so background task uses the exact key returned here
+    background_tasks.add_task(_run_curator_bg, resolved_date, synth, False)
+    parsed = curator_engine.parse_set_key(resolved_date)
+    is_extra = bool(parsed and parsed[1] >= 2)
+    msg = (
+        f"追加セット（{parsed[0]} 追加 #{parsed[1]}）のキュレーションを開始しました。"
+        if is_extra
+        else f"{resolved_date} のキュレーションを開始しました。"
+    )
     return {
         "started": True,
-        "date": target_date or curator_engine.today_jst_str(),
-        "message": "バックグラウンドでキュレーションを開始しました。",
+        "date": resolved_date,
+        "append_set": append_set,
+        "message": msg,
     }
 
 

@@ -166,19 +166,113 @@ def save_history(history: Dict[str, Any]) -> None:
     _atomic_write_json(HISTORY_FILE, history)
 
 
+_SET_KEY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:_set(\d+))?$")
+
+
+def parse_set_key(set_key: str) -> Optional[Tuple[str, int]]:
+    """Parse 'YYYY-MM-DD' -> ('YYYY-MM-DD', 1) or 'YYYY-MM-DD_setN' -> ('YYYY-MM-DD', N)."""
+    if not set_key:
+        return None
+    m = _SET_KEY_RE.match(set_key.strip())
+    if not m:
+        return None
+    base_date = m.group(1)
+    set_num = int(m.group(2)) if m.group(2) else 1
+    return base_date, set_num
+
+
+def _set_key_sort_tuple(set_key: str) -> Tuple[str, int]:
+    parsed = parse_set_key(set_key)
+    if not parsed:
+        return (set_key, 0)
+    return parsed
+
+
+def resolve_next_set_key(base_date: Optional[str] = None, append_set: bool = False) -> str:
+    """
+    Resolve the target set key for a curation run.
+    - append_set=False: returns `base_date` (or today JST `YYYY-MM-DD`) without incrementing.
+    - append_set=True:
+        * If no set exists for that day yet -> `YYYY-MM-DD`
+        * If `daily_YYYY-MM-DD.json` (or `_setN`) already exists -> `YYYY-MM-DD_set{max_N + 1}`
+    """
+    ensure_dirs()
+    if not append_set:
+        return (base_date or "").strip() or today_jst_str()
+
+    parsed = parse_set_key(base_date) if base_date else None
+    day = parsed[0] if parsed else today_jst_str()
+
+    existing_nums: List[int] = []
+    for p in CURATOR_DIR.glob(f"daily_{day}*.json"):
+        m = re.match(r"^daily_(\d{4}-\d{2}-\d{2}(?:_set\d+)?)\.json$", p.name)
+        if not m:
+            continue
+        p_parsed = parse_set_key(m.group(1))
+        if p_parsed and p_parsed[0] == day:
+            existing_nums.append(p_parsed[1])
+
+    if not existing_nums:
+        return day
+    next_num = max(existing_nums) + 1
+    return f"{day}_set{next_num}"
+
+
+def _collect_same_day_selected(base_day: str, exclude_set_key: Optional[str] = None) -> Tuple[Set[str], List[str]]:
+    """Collect normalized URLs and titles already selected in other sets on the same calendar day."""
+    urls: Set[str] = set()
+    titles: List[str] = []
+    for p in CURATOR_DIR.glob(f"daily_{base_day}*.json"):
+        m = re.match(r"^daily_(\d{4}-\d{2}-\d{2}(?:_set\d+)?)\.json$", p.name)
+        if not m:
+            continue
+        key = m.group(1)
+        p_parsed = parse_set_key(key)
+        if not p_parsed or p_parsed[0] != base_day:
+            continue
+        if exclude_set_key and key == exclude_set_key:
+            continue
+        doc = _read_json(p)
+        if not doc or not isinstance(doc.get("parts"), list):
+            continue
+        for part in doc["parts"]:
+            src = part.get("source") or {}
+            src_url = src.get("url") or ""
+            if src_url:
+                urls.add(curator_sources.normalize_url(src_url))
+            orig_title = (src.get("original_title") or "").strip()
+            if orig_title and orig_title != "Cross-Theme Synthesis":
+                titles.append(orig_title)
+            ja_title = (part.get("title") or "").strip()
+            if ja_title:
+                titles.append(ja_title)
+    return urls, titles
+
+
 def list_curated_dates() -> List[str]:
     ensure_dirs()
     dates: List[str] = []
     for p in CURATOR_DIR.glob("daily_*.json"):
-        m = re.match(r"daily_(\d{4}-\d{2}-\d{2})\.json$", p.name)
+        m = re.match(r"^daily_(\d{4}-\d{2}-\d{2}(?:_set\d+)?)\.json$", p.name)
         if m:
             dates.append(m.group(1))
-    dates.sort(reverse=True)
+    dates.sort(key=_set_key_sort_tuple, reverse=True)
     return dates
 
 
+list_available_dates = list_curated_dates
+
+
+def load_research_log(date_str: str) -> Optional[Dict[str, Any]]:
+    """Load research log for a given date/set key (`YYYY-MM-DD` or `YYYY-MM-DD_setN`)."""
+    ensure_dirs()
+    if not date_str:
+        return None
+    return _read_json(CURATOR_DIR / f"research_log_{date_str}.json")
+
+
 def load_daily(date_str: Optional[str] = None) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """Load daily selection and research log for a given date (or latest available)."""
+    """Load daily selection and research log for a given date/set key (or latest available)."""
     ensure_dirs()
     target_date = date_str
     if not target_date:
@@ -585,6 +679,8 @@ def select_slots(
     discovery_evaluated: List[Dict[str, Any]],
     wildcard_evaluated: List[Dict[str, Any]],
     min_weighted_score: float = MIN_SLOT_WEIGHTED_SCORE,
+    excluded_urls: Optional[Set[str]] = None,
+    excluded_titles: Optional[List[str]] = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """
     Slot-based selection for 9 daily parts (3 per track, NOT naive top-N by total weighted score):
@@ -593,13 +689,15 @@ def select_slots(
       - Wild Card #1 / #2 / #3: purely from wildcard_evaluated (preference-blind),
         balancing weighted_score (45%) + curiosity (30%) + originality (25%)
     Deduplication & quality rules:
-      - Never selects the same normalized URL twice.
-      - Excludes candidates with overlapping/same theme as already selected items.
+      - Never selects the same normalized URL twice (including `excluded_urls` from prior/same-day sets).
+      - Excludes candidates with overlapping/same theme as already selected items (including `excluded_titles`).
       - Prefers distinct domains when alternatives exist.
       - Does NOT pad with low-quality items (< min_weighted_score) or cross-track backfill for #2/#3 slots.
     """
-    used_urls: Set[str] = set()
-    used_titles: List[str] = []
+    used_urls: Set[str] = {
+        curator_sources.normalize_url(u) for u in (excluded_urls or ()) if u
+    }
+    used_titles: List[str] = [t for t in (excluded_titles or []) if t]
     used_domains: Set[str] = set()
 
     def _pick_best(
@@ -800,6 +898,7 @@ def _generate_part_script(
 def cleanup_old_unadopted_audio(days: int = 14) -> List[str]:
     """
     Delete pre-synthesized curator MP3 files older than `days` if they were NOT adopted (enqueued).
+    Supports both `daily_YYYY-MM-DD.json` and `daily_YYYY-MM-DD_setN.json`.
     JSON files, scripts, research logs, and history.json are NEVER deleted.
     """
     ensure_dirs()
@@ -807,7 +906,7 @@ def cleanup_old_unadopted_audio(days: int = 14) -> List[str]:
     deleted: List[str] = []
 
     for daily_file in CURATOR_DIR.glob("daily_*.json"):
-        m = re.match(r"daily_(\d{4}-\d{2}-\d{2})\.json$", daily_file.name)
+        m = re.match(r"^daily_(\d{4}-\d{2}-\d{2})(?:_set\d+)?\.json$", daily_file.name)
         if not m:
             continue
         date_str = m.group(1)
@@ -867,18 +966,21 @@ async def run_daily_curation(
     date_str: Optional[str] = None,
     synthesize_audio: bool = True,
     enable_grounding: bool = True,
+    append_set: bool = False,
 ) -> Dict[str, Any]:
     """
     Execute the complete Personal Knowledge Curator pipeline for `date_str` (default: today JST):
       1. Cleanup unadopted MP3s older than 14 days
-      2. Crawl & strictly verify candidates (RSS, OpenAlex, J-STAGE, Gemini Grounding)
+      2. Crawl & strictly verify candidates (RSS, OpenAlex, J-STAGE, Gemini Grounding),
+         excluding seen history AND any items already selected in earlier sets of the same day
       3. Run 3 independent evaluations (Core, Discovery, Wild Card — Wild Card isolated from preferences)
       4. Slot-based selection (9 independent parts: Core×3, Discovery×3, Wild Card×3)
       5. Generate source-faithful Japanese audio scripts & immediately persist daily JSON, scripts txt, research log
-      6. Incrementally synthesize VOICEPEAK MP3s part-by-part, updating daily_YYYY-MM-DD.json after EACH part!
+      6. Incrementally synthesize VOICEPEAK MP3s part-by-part, updating daily_{target_date}.json after EACH part!
+    When `append_set=True` and `daily_YYYY-MM-DD.json` already exists, writes to `YYYY-MM-DD_set2` (`_set3`, ...).
     """
     ensure_dirs()
-    target_date = date_str or today_jst_str()
+    target_date = resolve_next_set_key(date_str, append_set=append_set)
 
     if _CURATOR_STATUS.get("running"):
         raise RuntimeError("Curator pipeline is already running.")
@@ -903,8 +1005,24 @@ async def run_daily_curation(
         except Exception as ce:
             print(f"[Curator/Cleanup] Listened queue audio cleanup warning: {ce}")
         history = load_history()
-        seen_urls = set(history.get("seen_urls", []))
-        seen_titles = set(history.get("seen_titles", []))
+        seen_urls = {
+            curator_sources.normalize_url(u)
+            for u in history.get("seen_urls", [])
+            if u
+        }
+        seen_titles = {
+            t.strip().lower()
+            for t in history.get("seen_titles", [])
+            if isinstance(t, str) and t.strip()
+        }
+        # Also exclude URLs & titles from any existing sets of the same day so append_set picks fresh articles
+        parsed_target = parse_set_key(target_date)
+        base_day = parsed_target[0] if parsed_target else today_jst_str()
+        same_day_urls, same_day_titles = _collect_same_day_selected(base_day, exclude_set_key=target_date)
+        seen_urls |= same_day_urls
+        for t in same_day_titles:
+            seen_titles.add(t.strip().lower())
+
         core_pref = history.get("core_preference_summary") or DEFAULT_CORE_PREFERENCE
 
         # Phase 1: Crawl & verify sources
@@ -957,7 +1075,13 @@ async def run_daily_curation(
         )
 
         # Phase 3: Slot-based selection (9 parts: Core×3, Discovery×3, Wild Card×3)
-        selected = select_slots(core_eval, disc_eval, wc_eval)
+        selected = select_slots(
+            core_eval,
+            disc_eval,
+            wc_eval,
+            excluded_urls=seen_urls,
+            excluded_titles=same_day_titles,
+        )
         selected_urls = {
             curator_sources.normalize_url(c["url"]): slot
             for slot, c in selected.items()
@@ -1393,10 +1517,14 @@ def record_feedback(
     }
 
 
+save_feedback = record_feedback
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Readout Personal Knowledge Curator CLI")
     parser.add_argument("--run", action="store_true", help="Run daily curation and pre-synthesize audio")
     parser.add_argument("--date", type=str, default=None, help="Target date YYYY-MM-DD (default: today JST)")
+    parser.add_argument("--append-set", action="store_true", help="Append as YYYY-MM-DD_set2/_set3 if daily already exists")
     parser.add_argument("--no-audio", action="store_true", help="Skip TTS synthesis (scripts only)")
     parser.add_argument("--no-grounding", action="store_true", help="Disable Gemini Search Grounding")
     args = parser.parse_args()
@@ -1407,6 +1535,7 @@ def main() -> None:
                 date_str=args.date,
                 synthesize_audio=not args.no_audio,
                 enable_grounding=not args.no_grounding,
+                append_set=args.append_set,
             )
         )
         print(f"[+] Daily curation finished for {res['date']} ({res['parts_ready']}/{res['parts_total']} audio ready)")

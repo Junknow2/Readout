@@ -60,7 +60,7 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - **多ソース巡回 ＆ 厳格なハルシネーション/ペイウォール排除**: Knowledge at Wharton、MIT Sloan Management Review、RIETI、Behavioral Scientist、The Conversation、Greenbook、Quirk's、ESOMAR、Our World in Data、Works in Progress、NBER、J-STAGE API、OpenAlex API、さらに Gemini Google Search Grounding を組み合わせ、全候補を Python 側で実アクセス・本文検証（404・ログイン壁・ペイウォール・本文不足を機械的に除外し Research Log へ記録）。
    - **1〜6章集中（良い記事の発見・選定特化）＆ 3 独立探索 ＆ 7 軸加重評価**: Core / Discovery / Wild Card の 3 トラックで独立評価（**Wild Card には過去の好みプロファイルを一切渡さず過剰適合を構造的に防止**）。なぜその現象が起きるか・定説の実証検証・流行のその後・成功と失敗の構造差・数年後も価値が残る論考を高く評価し、個別企業のレイオフ・人事・決算・新商品発表・単なる AI ツール紹介・「7つの習慣」系一般論・根拠の薄いトレンド予測は厳しく減点。7 軸加重スコア（問いの深さ 20%、説明力 20%、根拠の質 20%、独自性 15%、長期的価値 10%、好奇心 10%、音声適性 5%）と関心適合度・新規性から枠別選考。
    - **独立 9 パート編成（Core×3 / Discovery×3 / Wild Card×3、Part 4 Connections 廃止）＆ 元記事忠実リライト（生成温度 `0.4`・AI追記/誇張表現禁止）**: Core Deep Dive×3（`part1_core_1/2/3`）、Discovery Deep Dive×3（`part2_discovery_1/2/3`）、Wild Card×3（`part3_wildcard_1/2/3`）の計 9 パートを同一 URL・同一テーマ重複なしで選出（Part 4 の Connections 統合パートは廃止し、良質な記事発見・選定に集中。良質な候補が不足する場合は水増しせず不足を明示。既存の 6 パート / 3 パート形式および旧 `part4_connections` も完全後方互換）。音声原稿は **生成温度 `0.4` で AI による勝手な考察・反論・教訓の追記や「革新的な」「画期的な」「パラダイムシフト」等の誇張表現を完全禁止** し、元記事の内容（問い・主張・根拠・データ・具体例・結論）のみを落ち着いた日本語ナレーション（通常 1,200〜2,800 字＝約 4〜8 分目安・情報量に応じて自然伸縮、冒頭は「{媒体名カタカナ}、『{日本語タイトル}』。」、英単語カタカナ化済み）へ忠実に翻訳・口語化。
-   - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開（使用エンジン `tts_engine` も記録）。14 日より前の未採用 MP3 および 7 日以上前の既読キュー MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
+   - **毎日 03:00 自動事前音声化 ＆ 逐次公開 ＆ 手動「⚡ もう1セット追加」**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開（使用エンジン `tts_engine` も記録）。お出かけ前などにもう 1 セット聴きたいときは `✨ Curator` タブの **`⚡ もう1セット追加`** ボタンから、当日の定期セットを上書きせず **`YYYY-MM-DD_set2`**（さらに実行すれば `_set3`, `_set4` ...）として重複排除済みの新しい 9 本を追加生成可能（プルダウンには `YYYY-MM-DD（追加 #2）` として表示）。14 日より前の未採用 MP3（追加セット含む）および 7 日以上前の既読キュー MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
    - **待ち時間 0 秒の即キュー投入 ＆ 5 段階フィードバック**: `✨ Curator` タブからワンタップで事前音声化済み MP3 を即座にメイン再生キューへ追加（`status="ready"`、`tts_engine` 引き継ぎ）。5 段階評価＋理由チップ＋任意メモで Core 関心プロファイルを継続学習。Research Log の不採用記事も「＋ 自分で聴く」で通常キューへ投入可能。
 
 7. **未読 / 既読切替 ＆ Matrix Note 連携 ＆ 既読音声7日自動削除 (`queue_manager.py`, `main.py`)**:
@@ -152,7 +152,7 @@ cd C:\Users\Jun\Documents\Dev\Readout
 | `GET` | `/api/curator/dates` | Curator 日次データが存在する日付一覧を取得 |
 | `GET` | `/api/curator/status` | バックグラウンド実行中の Curator 進捗ステータスを取得 |
 | `GET` | `/api/curator/daily` | 指定日（または最新日）の Curator 9本推薦データ＋Research Log＋ステータスを取得 |
-| `POST` | `/api/curator/run` | Curator の手動キュレーション＆事前音声化をバックグラウンド起動 |
+| `POST` | `/api/curator/run` | Curator の手動キュレーション＆事前音声化をバックグラウンド起動（`append_set=true` デフォルトで当日既存セットを上書きせず `YYYY-MM-DD_set2` 等を追加生成） |
 | `POST` | `/api/curator/enqueue` | Curator 推薦パートを再生キューへ投入（事前音声化済みなら待ち時間 0 秒で `ready`） |
 | `POST` | `/api/curator/feedback` | 5 段階評価＋理由チップ＋メモを保存し Core 関心プロファイルを更新 |
 | `POST` | `/api/curator/pick-candidate` | Research Log 上の候補記事（不採用含む）を通常再生キューへ手動投入 |
