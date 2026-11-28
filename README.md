@@ -28,10 +28,11 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
    - プライベート Podcast RSS: `GET /feed.xml`（Pocket Casts や Apple Podcasts で直接購読可能）。
 
 3. **ランナー特化・完全オフライン対応 PWA (`templates/index.html`, `static/`)**:
-   - **スッキリ 3 タブ構成**:
-     - **`🎧 再生キュー`**: オーディオプレイヤー＋未読/既読切替＋再生キュー一覧のみに特化し、再生操作に集中できる画面。
-     - **`✨ Curator`**: 毎日の AI 厳選推薦 9 本と Research Log を閲覧・即キュー投入・フィードバックできる画面。
+   - **スッキリ 3 タブ構成（内蔵 RSS リーダータブ廃止・Podcast `/feed.xml` は維持）**:
+     - **`🎧 再生キュー`**: オーディオプレイヤー＋未読（デフォルト）/ 既読切替＋再生キュー一覧のみに特化し、再生操作に集中できる画面。
+     - **`✨ Curator`**: 毎日の AI 厳選推薦 9 本と Research Log を閲覧・即キュー投入・フィードバック・Matrix Note 送信できる画面。
      - **`📥 追加 (URL/PDF)`**: PDF ファイルアップロード（ドラッグ＆ドロップ／スマホファイル選択）を主役に据え、Web 記事・PDF URL 直接入力およびブックマークレット案内を集約。追加完了後は自動で `🎧 再生キュー` タブへ遷移。
+     - ※ 内蔵 RSS リーダータブは Curator への役割集約に伴い廃止（Pocket Casts 等向けプライベート Podcast 出力 `GET /feed.xml` は引き続き維持）。
    - **高コントラスト・ダークテーマ**: 屋外直射日光下やOLED画面でも見やすい漆黒（`#0A0A0E`）× ネオンイエロー（`#CCFF00`）。
    - **大型タッチUI**: 揺れや手袋着用時でも誤タップしない特大再生ボタン、10秒戻し（-10s）/ 30秒送り（+30s）ボタン。
    - **再生速度変更**: 1.0x / 1.25x / 1.5x / 2.0x をワンタップ切り替え。
@@ -58,7 +59,7 @@ Web上の記事（技術ブログ、note、海外テックニュース等）のU
 6. **Personal Knowledge Curator（1〜6章集中：AI 記事発見・選定 ＆ 元記事忠実リライト ＆ 深夜事前音声化）(`curator_sources.py`, `curator_engine.py`, `run_curator_daily.bat`)**:
    - **多ソース巡回 ＆ 厳格なハルシネーション/ペイウォール排除**: Knowledge at Wharton、MIT Sloan Management Review、RIETI、Behavioral Scientist、The Conversation、Greenbook、Quirk's、ESOMAR、Our World in Data、Works in Progress、NBER、J-STAGE API、OpenAlex API、さらに Gemini Google Search Grounding を組み合わせ、全候補を Python 側で実アクセス・本文検証（404・ログイン壁・ペイウォール・本文不足を機械的に除外し Research Log へ記録）。
    - **1〜6章集中（良い記事の発見・選定特化）＆ 3 独立探索 ＆ 7 軸加重評価**: Core / Discovery / Wild Card の 3 トラックで独立評価（**Wild Card には過去の好みプロファイルを一切渡さず過剰適合を構造的に防止**）。なぜその現象が起きるか・定説の実証検証・流行のその後・成功と失敗の構造差・数年後も価値が残る論考を高く評価し、個別企業のレイオフ・人事・決算・新商品発表・単なる AI ツール紹介・「7つの習慣」系一般論・根拠の薄いトレンド予測は厳しく減点。7 軸加重スコア（問いの深さ 20%、説明力 20%、根拠の質 20%、独自性 15%、長期的価値 10%、好奇心 10%、音声適性 5%）と関心適合度・新規性から枠別選考。
-   - **独立 9 パート編成（Core×3 / Discovery×3 / Wild Card×3）＆ 元記事忠実リライト（AI追記・誇張表現禁止）**: Core Deep Dive×3（`part1_core_1/2/3`）、Discovery Deep Dive×3（`part2_discovery_1/2/3`）、Wild Card×3（`part3_wildcard_1/2/3`）の計 9 パートを同一 URL・同一テーマ重複なしで選出（良質な候補が不足する場合は水増しせず不足を明示。既存の 6 パート / 3 パート形式および旧 `part4_connections` も完全後方互換）。音声原稿は **AI による勝手な考察・反論・教訓の追記や「革新的な」「画期的な」「パラダイムシフト」等の誇張表現を完全禁止** し、元記事の内容（問い・主張・根拠・データ・具体例・結論）のみを落ち着いた日本語ナレーション（通常 1,200〜2,800 字＝約 4〜8 分目安・情報量に応じて自然伸縮、冒頭は「{媒体名カタカナ}、『{日本語タイトル}』。」、英単語カタカナ化済み）へ忠実に翻訳・口語化。
+   - **独立 9 パート編成（Core×3 / Discovery×3 / Wild Card×3、Part 4 Connections 廃止）＆ 元記事忠実リライト（生成温度 `0.4`・AI追記/誇張表現禁止）**: Core Deep Dive×3（`part1_core_1/2/3`）、Discovery Deep Dive×3（`part2_discovery_1/2/3`）、Wild Card×3（`part3_wildcard_1/2/3`）の計 9 パートを同一 URL・同一テーマ重複なしで選出（Part 4 の Connections 統合パートは廃止し、良質な記事発見・選定に集中。良質な候補が不足する場合は水増しせず不足を明示。既存の 6 パート / 3 パート形式および旧 `part4_connections` も完全後方互換）。音声原稿は **生成温度 `0.4` で AI による勝手な考察・反論・教訓の追記や「革新的な」「画期的な」「パラダイムシフト」等の誇張表現を完全禁止** し、元記事の内容（問い・主張・根拠・データ・具体例・結論）のみを落ち着いた日本語ナレーション（通常 1,200〜2,800 字＝約 4〜8 分目安・情報量に応じて自然伸縮、冒頭は「{媒体名カタカナ}、『{日本語タイトル}』。」、英単語カタカナ化済み）へ忠実に翻訳・口語化。
    - **毎日 03:00 自動事前音声化 ＆ 逐次公開**: Windows タスクスケジューラ `ReadoutDailyCurator` が毎日 `03:00` に起動し、VOICEPEAK（女性2）で 1 パート完了するごとに `data/curator/daily_YYYY-MM-DD.json` へ即時公開（使用エンジン `tts_engine` も記録）。14 日より前の未採用 MP3 および 7 日以上前の既読キュー MP3 は自動削除（JSON・原稿・Research Log・履歴は永久保存）。
    - **待ち時間 0 秒の即キュー投入 ＆ 5 段階フィードバック**: `✨ Curator` タブからワンタップで事前音声化済み MP3 を即座にメイン再生キューへ追加（`status="ready"`、`tts_engine` 引き継ぎ）。5 段階評価＋理由チップ＋任意メモで Core 関心プロファイルを継続学習。Research Log の不採用記事も「＋ 自分で聴く」で通常キューへ投入可能。
 
@@ -142,12 +143,20 @@ cd C:\Users\Jun\Documents\Dev\Readout
 | `POST` | `/api/queue` | 新規URL追加（Web記事 / PDF直リンク対応、バックグラウンド生成開始） |
 | `POST` | `/api/upload-pdf` | **PDFファイルアップロード（Gemini 3.8 Flash ＋ VOICEPEAK 音声化）** |
 | `GET` | `/pdf/{id}.pdf` | アップロード済み原本PDFダウンロード・プレビュー |
+| `GET` | `/api/bookmarklet` | ワンクリック登録ブックマークレット用エンドポイント（自動クローズ確認画面返却） |
 | `POST` | `/api/queue/{id}/listened` | 既読フラグ更新（`listened_at` 記録、既読一覧へ移動） |
 | `POST` | `/api/queue/{id}/unread` | 既読アイテムを未読（`ready`）へ復帰（MP3残存時のみ） |
 | `POST` | `/api/queue/cleanup-listened` | 既読から `retention_days`（デフォルト7日）以上経過した MP3 のみ削除 |
 | `POST` | `/api/queue/{id}/send-to-matrix-note` | 再生キューアイテムを Matrix Note (`:8000/api/notes`) へメモ送信 |
-| `POST` | `/api/curator/send-to-matrix-note` | Curator 推薦パートを Matrix Note (`:8000/api/notes`) へメモ送信 |
 | `DELETE` | `/api/queue/{id}` | キュー削除およびMP3/原本PDFファイル削除 |
+| `GET` | `/api/curator/dates` | Curator 日次データが存在する日付一覧を取得 |
+| `GET` | `/api/curator/status` | バックグラウンド実行中の Curator 進捗ステータスを取得 |
+| `GET` | `/api/curator/daily` | 指定日（または最新日）の Curator 9本推薦データ＋Research Log＋ステータスを取得 |
+| `POST` | `/api/curator/run` | Curator の手動キュレーション＆事前音声化をバックグラウンド起動 |
+| `POST` | `/api/curator/enqueue` | Curator 推薦パートを再生キューへ投入（事前音声化済みなら待ち時間 0 秒で `ready`） |
+| `POST` | `/api/curator/feedback` | 5 段階評価＋理由チップ＋メモを保存し Core 関心プロファイルを更新 |
+| `POST` | `/api/curator/pick-candidate` | Research Log 上の候補記事（不採用含む）を通常再生キューへ手動投入 |
+| `POST` | `/api/curator/send-to-matrix-note` | Curator 推薦パートを Matrix Note (`:8000/api/notes`) へメモ送信 |
 | `GET` | `/audio/{filename}` | MP3 音声ストリーミング（HTTP Range 206 対応） |
 | `GET` | `/feed.xml` | Pocket Casts 購読用 Podcast RSS 2.0 フィード |
 
